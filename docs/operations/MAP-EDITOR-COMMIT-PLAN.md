@@ -1,6 +1,18 @@
 # Map editor implementation: commit plan
 
-**Status:** approved for execution on 2026-10-22. The three source/documentation commits are made locally in the recorded order; resulting hashes are added in a separate `docs:` follow-up commit. Nothing is pushed by this task.
+**Status:** executed locally on 2026-10-22 in the recorded order; nothing has been pushed. Publishing remains a separate user instruction.
+
+## Result
+
+Executed locally on 2026-10-22 in the planned order:
+
+| Order | Hash | Commit message |
+|-------|------|----------------|
+| 1 | `f4f3f35` | `feat: add track-based rail itinerary evaluation` |
+| 2 | `b9a1dfa` | `feat: add map route studio and My Maps export` |
+| 3 | `b0e1ff6` | `docs: document route studio setup and commit boundaries` |
+
+This follow-up `docs:` commit records the result; it cannot contain its own hash. Post-commit verification ran clean: **17 tests passed**, both JavaScript files passed `node --check`, `py_compile` and server help passed, the key-material scan found nothing, and the working tree was clean before this record. The live Google canvas verification noted below was performed before the series. Nothing was pushed.
 
 ## Baseline and scope
 
@@ -86,4 +98,4 @@ git diff --cached --check
 git diff --cached
 ```
 
-Repeat the same staged review for commits 2 and 3 using their explicit file lists. Do not use `git add .`, sweep in concurrent changes, amend existing history, or push as part of an approval limited to local commits. After the series is committed, record the resulting hashes here in a separate `docs:` commit; do not amend the source commits. Leave provider-dependent verification honestly marked.
+Repeat the same staged review for commits 2 and 3 using their explicit file lists. Do not use `git add .`, sweep in concurrent changes, amend existing history, or push as part of an approval limited to local commits. The resulting hashes are recorded above in the separate follow-up `docs:` commit; do not amend the source commits. Leave provider-dependent verification honestly marked.
