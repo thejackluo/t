@@ -1,0 +1,19 @@
+{
+  "mode": "interactive",
+  "runtime": "opencode",
+  "resolve_model_ids": "omit",
+  "workflow": {
+    "auto_advance": false,
+    "nyquist_validation": true,
+    "ai_integration_phase": false
+  },
+  "planning": {
+    "commit_docs": true
+  },
+  "git": {
+    "create_tag": false
+  },
+  "parallelization": {
+    "enabled": false
+  }
+}

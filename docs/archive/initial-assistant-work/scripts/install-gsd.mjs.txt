@@ -1,0 +1,35 @@
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const nodePackage = 'node@24.22.1';
+const gsdPackage = '@opengsd/gsd-core@1.18.0';
+const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const result = spawnSync(npx, [
+  '--yes',
+  `--package=${nodePackage}`,
+  `--package=${gsdPackage}`,
+  '--',
+  'gsd-core',
+  '--opencode',
+  '--local',
+  '--relative-includes',
+  '--no-legacy-cleanup',
+], { cwd: root, stdio: 'inherit' });
+
+if (result.error) throw result.error;
+if (result.status !== 0) process.exit(result.status ?? 1);
+
+// The installer emits an unpinned MCP launcher; use the same versions as setup.
+const configPath = resolve(root, '.opencode/opencode.json');
+const config = JSON.parse(readFileSync(configPath, 'utf8'));
+if (!config.mcp?.gsd) throw new Error('GSD installer did not create its MCP config');
+config.$schema = 'https://opencode.ai/config.json';
+config.mcp.gsd.command = [
+  'npx', '-y', '-p', nodePackage, '-p', gsdPackage,
+  'gsd-mcp-server', '--no-prompts',
+];
+writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+console.log('GSD setup complete: pinned local OpenCode installation. Restart OpenCode.');

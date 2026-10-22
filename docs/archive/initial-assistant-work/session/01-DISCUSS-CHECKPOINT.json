@@ -1,0 +1,27 @@
+{
+  "phase": "1",
+  "phase_name": "Dataset and challenge rules",
+  "timestamp": "2026-10-21",
+  "discussion_scope": "First-application requirements. The earlier numbered roadmap has been archived as reference, not an active execution plan. This file preserves discussion history; current requirements are docs/MAP-EDITOR-REQUIREMENTS.md and docs/GUINNESS-RULES.md.",
+  "areas_completed": ["Dragging ride/run segments", "Station scope and rules"],
+  "areas_remaining": ["Schedule and total time", "Saving and comparing plans"],
+  "discussion_status": "User requested fewer questions and supplied the application guidelines. Do not resume the question loop automatically. Timing/saving recommendations are explicitly provisional in docs/MAP-EDITOR-REQUIREMENTS.md; request only genuinely missing inputs.",
+  "decisions": {
+    "Dragging ride/run segments": [
+      {"question": "How does a drag select Ride versus Run?", "answer": "Choose mode first. Fixed stations are endpoints; dragging creates a connection.", "options_presented": ["Choose mode first", "Choose after dragging", "Infer, with override"]},
+      {"question": "What happens when a Ride needs a train change?", "answer": "Preview rail options, let the user choose, then expand into explicit ride and transfer legs.", "options_presented": ["Preview rail options", "Direct rides only", "Pick fastest scheduled path"]},
+      {"question": "What initial Run path is created?", "answer": "Suggest a pedestrian street route with editable waypoints, distance, and pace-based timing.", "options_presented": ["Street route + edits", "Draw the route manually", "Straight connector initially"]},
+      {"question": "How do new segments enter the itinerary?", "answer": "One connected itinerary. First segment sets start; subsequent segments extend endpoint. Support insertion/replacement, reordering, undo, and flag gaps.", "options_presented": ["Connected itinerary", "Sketch freely, assemble later", "Itinerary plus scratch layer"]}
+    ],
+    "Station scope and rules": [
+      {"question": "Initial selectable rail network?", "answer": "Use the existing Red, Orange, Blue, Green B/C/D/E, and Mattapan dataset.", "options_presented": ["Use existing rail set", "Include Silver Line too", "Follow document first"]},
+      {"question": "Interim coverage rule?", "answer": "User selected a provisional stopped-train rule. The subsequently supplied guidelines substantiate normal-service stopped-train visits, subject to explicit closure exceptions and unresolved Silver wording.", "options_presented": ["Provisional train-stop rule", "Track facts, defer verdict", "Require boarding or alighting"]},
+      {"question": "Initial non-rail connections?", "answer": "Support running, walking, and internal station transfers. Supplied rules also permit scheduled public transport, but that does not require every connector mode in the first release.", "options_presented": ["Run, walk, station transfers", "Run and station transfers only", "Other public transit too"]},
+      {"question": "Endpoints?", "answer": "Free endpoints with optional pins; official clock boundaries come from the supplied guidelines.", "options_presented": ["Free endpoints, optional pins", "Same start and finish", "Fixed stations now"]},
+      {"question": "Additional source supplied by user", "answer": "Application-specific Boston guidelines explicitly require Silver Line, continuous first-door-close to final-platform timing, stopped public-service train visits, documented closure exceptions, and specified photo/video/log/witness evidence. Attached station image and separate evidence guide were not included.", "options_presented": []}
+    ]
+  },
+  "deferred_ideas": [],
+  "canonical_refs": ["docs/MAP-EDITOR-REQUIREMENTS.md", "docs/GUINNESS-RULES.md", "docs/RAIL-SCHEDULE-API-PLAN.md", "docs/archive/initial-assistant-work/INTERACTIVE-MAP-PLAN.md", "output/manifest.json", "schedule_lookup.py"],
+  "open_source_request": "User supplied guideline text; see docs/GUINNESS-RULES.md. Obtain its referenced station-list image to establish the official inventory and the separate Guide to Your Evidence before evidence-workflow implementation."
+}
