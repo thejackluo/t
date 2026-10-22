@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "mkdir -p public && cp frontend/map_editor/static/index.html frontend/map_editor/static/app.js frontend/map_editor/static/map.js frontend/map_editor/static/style.css public/",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "{backend/**,frontend/map_editor/**,output/manifest.json,output/stations.csv.gz,output/service_calendar.csv.gz,output/departures.csv.gz,data/raw/**}",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index?__path=$1"
+    }
+  ]
+}

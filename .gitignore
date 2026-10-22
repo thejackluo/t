@@ -24,3 +24,8 @@ evidence/
 # Python scheduling workbook tooling
 .venv/
 __pycache__/
+
+# Vercel build output
+public/
+.vercel/
+.vercel

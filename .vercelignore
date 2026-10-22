@@ -1,0 +1,6 @@
+.opencode/
+docs/
+utilities/
+**/__pycache__/
+**/*.pyc
+output/MBTA_Rail_Scheduling.xlsx

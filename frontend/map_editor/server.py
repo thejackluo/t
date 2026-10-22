@@ -16,6 +16,27 @@ from backend.rail_schedule.itinerary import RailNetwork, COLORS
 
 STATIC = Path(__file__).resolve().parent / 'static'
 MY_MAP = 'https://www.google.com/maps/d/u/0/edit?mid=1uOrMD32-8alM_w2tyQ-Xio6b6jcxRyk'
+JSON_MIME = 'application/json; charset=utf-8'
+ASSETS = {'/': ('index.html', 'text/html; charset=utf-8'),
+          '/index.html': ('index.html', 'text/html; charset=utf-8'),
+          '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+          '/map.js': ('map.js', 'text/javascript; charset=utf-8'),
+          '/style.css': ('style.css', 'text/css; charset=utf-8')}
+REASONS = {200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found',
+           405: 'Method Not Allowed', 413: 'Payload Too Large', 500: 'Internal Server Error'}
+
+
+class ApiError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def same_origin(origin, host):
+    """Accept the browser's own origin over local HTTP or a deployed HTTPS proxy."""
+    if not origin:
+        return True
+    return urlparse(origin).netloc == (host or '').split(',')[0].strip()
 
 
 def network_kml(network):
@@ -65,9 +86,76 @@ def kml_document(network, scenario):
     return ET.tostring(root, encoding='utf-8', xml_declaration=True)
 
 
+def get_response(network, path, query):
+    if path == '/api/network':
+        return 200, JSON_MIME, network.metadata(), None
+    if path == '/api/config':
+        return 200, JSON_MIME, {'google_maps_key': os.environ.get('GOOGLE_MAPS_API_KEY', ''), 'my_maps_url': MY_MAP}, None
+    if path == '/api/options':
+        return 200, JSON_MIME, network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', '')), None
+    if path == '/api/export/network.kml':
+        return 200, 'application/vnd.google-earth.kml+xml', network_kml(network), 'MBTA-rail-tracks.kml'
+    if path in ASSETS:
+        name, mime = ASSETS[path]
+        asset = STATIC / name
+        if asset.is_file():
+            return 200, mime, asset.read_bytes(), None
+    raise ApiError(404, 'Not found')
+
+
+def post_response(network, path, raw):
+    if not 0 < len(raw) <= 4_000_000:
+        raise ApiError(413, 'Scenario payload must be under 4 MB.')
+    try:
+        scenario = json.loads(raw)
+    except ValueError as exc:
+        raise ApiError(400, 'Invalid JSON payload.') from exc
+    if not isinstance(scenario, dict):
+        raise ApiError(400, 'Expected a scenario object.')
+    if path == '/api/evaluate':
+        return 200, JSON_MIME, network.evaluate(scenario), None
+    if path == '/api/export/kml':
+        network.evaluate(scenario)  # Validate modes, sequence, assumptions and payload limits.
+        return 200, 'application/vnd.google-earth.kml+xml', kml_document(network, scenario), 't-run-itinerary.kml'
+    raise ApiError(404, 'Not found')
+
+
+def wsgi_application(network):
+    """No-dependency WSGI entrypoint used by Vercel and local smoke checks."""
+    def application(environ, start_response):
+        method = environ.get('REQUEST_METHOD', 'GET').upper()
+        path = environ.get('PATH_INFO') or '/'
+        query = {k: v[0] for k, v in parse_qs(environ.get('QUERY_STRING', '')).items()}
+        host = environ.get('HTTP_X_FORWARDED_HOST') or environ.get('HTTP_HOST', '')
+        try:
+            if method in ('GET', 'HEAD'):
+                status, mime, body, filename = get_response(network, path, query)
+            elif method == 'POST':
+                if not same_origin(environ.get('HTTP_ORIGIN'), host):
+                    raise ApiError(403, 'Use the editor origin.')
+                length = int(environ.get('CONTENT_LENGTH') or 0)
+                raw = environ['wsgi.input'].read(length) if length else b''
+                status, mime, body, filename = post_response(network, path, raw)
+            else:
+                raise ApiError(405, 'Method not allowed.')
+        except ApiError as exc:
+            status, mime, body, filename = exc.status, JSON_MIME, {'error': str(exc)}, None
+        except (ValueError, KeyError, TypeError, IndexError, OverflowError) as exc:
+            status, mime, body, filename = 400, JSON_MIME, {'error': str(exc)}, None
+        if not isinstance(body, bytes):
+            body = json.dumps(body, allow_nan=False).encode()
+        headers = [('Content-Type', mime), ('Content-Length', str(len(body))),
+                   ('Cache-Control', 'no-store'), ('X-Content-Type-Options', 'nosniff')]
+        if filename:
+            headers.append(('Content-Disposition', f'attachment; filename="{filename}"'))
+        start_response(f'{status} {REASONS.get(status, "Error")}', headers)
+        return [b'' if method == 'HEAD' else body]
+    return application
+
+
 def handler(network):
     class Handler(BaseHTTPRequestHandler):
-        def send(self, body, mime='application/json; charset=utf-8', status=200, filename=None):
+        def send(self, body, mime=JSON_MIME, status=200, filename=None):
             if not isinstance(body, bytes):
                 body = json.dumps(body, allow_nan=False).encode()
             self.send_response(status)
@@ -87,43 +175,27 @@ def handler(network):
             parsed = urlparse(self.path)
             query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
             try:
-                if parsed.path == '/api/network':
-                    return self.send(network.metadata())
-                if parsed.path == '/api/config':
-                    return self.send({'google_maps_key': os.environ.get('GOOGLE_MAPS_API_KEY', ''), 'my_maps_url': MY_MAP})
-                if parsed.path == '/api/options':
-                    return self.send(network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', '')))
-                if parsed.path == '/api/export/network.kml':
-                    return self.send(network_kml(network), 'application/vnd.google-earth.kml+xml', filename='MBTA-rail-tracks.kml')
-                files = {'/': ('index.html', 'text/html; charset=utf-8'),
-                         '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                         '/map.js': ('map.js', 'text/javascript; charset=utf-8'),
-                         '/style.css': ('style.css', 'text/css; charset=utf-8')}
-                if parsed.path in files:
-                    f, mime = files[parsed.path]
-                    return self.send((STATIC / f).read_bytes(), mime)
-                return self.send({'error': 'Not found'}, status=404)
+                status, mime, body, filename = get_response(network, parsed.path, query)
+                return self.send(body, mime, status, filename)
+            except ApiError as exc:
+                return self.send({'error': str(exc)}, status=exc.status)
             except (ValueError, KeyError, TypeError, IndexError) as exc:
                 return self.send({'error': str(exc)}, status=400)
 
         def do_POST(self):
-            # This local tool accepts JSON from its own origin only.
-            origin = self.headers.get('Origin')
-            if origin and origin != 'http://' + self.headers.get('Host', ''):
-                return self.send({'error': 'Use the local editor origin.'}, status=403)
+            # Browser posts must come from the page's own origin, including behind an HTTPS proxy.
+            host = self.headers.get('x-forwarded-host') or self.headers.get('Host', '')
+            if not same_origin(self.headers.get('Origin'), host):
+                return self.send({'error': 'Use the editor origin.'}, status=403)
             try:
                 length = int(self.headers.get('Content-Length', '0'))
                 if not 0 < length <= 4_000_000:
-                    return self.send({'error': 'Scenario payload must be under 4 MB.'}, status=413)
-                scenario = json.loads(self.rfile.read(length))
-                if not isinstance(scenario, dict):
-                    raise ValueError('Expected a scenario object.')
-                if urlparse(self.path).path == '/api/evaluate':
-                    return self.send(network.evaluate(scenario))
-                if urlparse(self.path).path == '/api/export/kml':
-                    network.evaluate(scenario)  # Validate modes, sequence, assumptions and payload limits.
-                    return self.send(kml_document(network, scenario), 'application/vnd.google-earth.kml+xml', filename='t-run-itinerary.kml')
-                return self.send({'error': 'Not found'}, status=404)
+                    raise ApiError(413, 'Scenario payload must be under 4 MB.')
+                raw = self.rfile.read(length)
+                status, mime, body, filename = post_response(network, urlparse(self.path).path, raw)
+                return self.send(body, mime, status, filename)
+            except ApiError as exc:
+                return self.send({'error': str(exc)}, status=exc.status)
             except (ValueError, KeyError, TypeError, IndexError, OverflowError) as exc:
                 return self.send({'error': str(exc)}, status=400)
     return Handler
