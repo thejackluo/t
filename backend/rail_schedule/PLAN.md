@@ -2,9 +2,60 @@
 
 This is the backend scheduling project's data/integration plan. Runnable tools and setup instructions are in [README.md](README.md).
 
+## Delivery plan
+
+The existing builder, single-departure lookup, and validator form the established baseline. `itinerary.py` now begins network/geometry and evaluation work. The packages below are the **delivery/verification checklist**, not a claim that those prototype capabilities have passed their completion checks. They replace the old generic phase numbering for backend work; detailed source/semantic notes follow this section.
+
+### B1 — Editor-facing data contract (next)
+
+**Depends on:** the existing generated exports; coordinate with frontend F1.
+
+- [ ] Specify the station/platform, route, service-date, departure, source-manifest, and ruleset references the editor needs.
+- [ ] Preserve original IDs, stop sequence, boarding/alighting restrictions, service-day times, and scheduled/estimated labels. Keep a draft rehearsal inventory separate from the official required list.
+- [ ] Decide which existing exports can be consumed directly and which normalized additions are needed; document versioning and compatibility expectations.
+- [ ] Choose a small worked example from a pinned dataset, including a branch/destination choice.
+
+**Done when:** the frontend can consume a documented sample with explicit fields and dataset identity; missing/unsupported dates and schema mismatches have defined outcomes. This does not require choosing a production server framework.
+
+### B2 — Directed network and transfer data
+
+**Depends on:** B1. Supplies frontend F3's ride alternatives and connectivity checks.
+
+- [ ] Derive directed ride patterns from consecutive stops on real trips, retaining shared trunks, branch choices, and intermediate calls.
+- [ ] Preserve station/boarding-stop identity and import directed transfer/pathway constraints where available.
+- [ ] Record entrance, exit, walking, and connection-buffer assumptions with provenance when they are not supplied or measured.
+- [ ] Produce a reviewable connectivity/inventory report rather than inferring connections from map proximity.
+
+**Done when:** representative Red/Green branch and interchange examples expand into valid explicit legs; unsupported transfers are visible; intermediate stops contribute coverage under the selected profile.
+
+### B3 — End-to-end timetable evaluator
+
+**Depends on:** B1 and B2. Integrates with frontend F4.
+
+- [ ] Accept a date/start time and ordered legs, then select feasible boardable departures while retaining same-trip continuity.
+- [ ] Include transfer/foot costs and recompute all later departures after an edit or missed connection.
+- [ ] Respect calendars, exceptions, platform restrictions, overnight service-day times, and unavailable service.
+- [ ] Return leg-level timing, elapsed totals, coverage facts, assumptions, and infeasibility reasons using the B1 contract.
+
+**Done when:** a ride → foot/transfer → ride example evaluates correctly, lengthening the middle leg selects a later train or reports infeasibility, and midnight/calendar/terminal cases have meaningful checks. Keep official clock-boundary allowances separate from timetable fields.
+
+### B4 — Silver Line extension (later)
+
+**Depends on:** a working rail contract/evaluator and a reviewed Silver route/stop inventory.
+
+- [ ] Include explicitly selected Silver routes and direction-specific boarding stops, including stops without rail-style parent stations.
+- [ ] Extend calendar/timing/coverage checks and preserve existing rail-only scenarios.
+- [ ] Keep required inventory and unresolved Silver-specific rule interpretations explicit.
+
+**Done when:** rail-only rehearsal and rail-plus-Silver profiles use the same evaluator without silently changing their coverage definitions. Full-record completeness also requires reconciling the supplied station-list attachment.
+
+### Backend/frontend handoff
+
+The backend owns transit identity, connectivity, schedule feasibility, and source provenance. The frontend owns editing, map interactions, and scenario presentation. F1 establishes their exchange contract with B1; B2 enables connected ride alternatives, and B3 enables realistic whole-itinerary timing. The delivery mechanism (files, worker boundary, or backend endpoint) remains an implementation choice, not an existing API.
+
 ## Deliverable and confirmed scope
 
-The user selected core rail and all service dates in the currently published schedule: **Red, Mattapan, Orange, Blue, Green-B, Green-C, Green-D, Green-E**. Silver Line, other buses, replacement shuttle buses, Commuter Rail, and ferries are excluded. These choices define this workbook; the separate record-attempt visit rules remain unresolved.
+The existing workbook covers core rail and all service dates in its published snapshot: **Red, Mattapan, Orange, Blue, Green-B, Green-C, Green-D, Green-E**. Silver Line, other buses, replacement shuttle buses, Commuter Rail, and ferries are excluded from that export. The supplied record rules are documented separately; the official station-list attachment and certain Silver-specific interpretations remain outstanding.
 
 **Future product scope:** Silver Line support is requested for later delivery; the supplied [Guinness rules](../../docs/references/GUINNESS-RULES.md) require it for the full attempt. The existing workbook remains a rail-only snapshot. Old Phase 7 numbering belongs to the archived proposal, not a current backend execution queue.
 

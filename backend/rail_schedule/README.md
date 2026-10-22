@@ -1,6 +1,6 @@
 # Rail schedule backend
 
-**Responsibility:** import official MBTA rail schedules, generate auditable tables/workbooks, and answer schedule lookups. This is the backend/data project, not the browser map editor. It currently provides Python modules and command-line tools; a multi-leg evaluator or production HTTP API is future work.
+**Responsibility:** import official MBTA rail schedules, generate auditable tables/workbooks, and answer schedule lookups. This is the backend/data project, not the browser map editor. The established tools provide imports/exports and single-departure lookup; network/itinerary evaluation is now prototype work in progress. A production HTTP API has not been established.
 
 ## What lives here
 
@@ -9,11 +9,21 @@
 | `build_schedule.py` | Reads a GTFS snapshot and builds the workbook, service calendar, daily station hours, departures, and other exports. |
 | `schedule_lookup.py` | Finds the next boardable scheduled departure and passenger-specific scheduled wait. |
 | `validate_schedule.py` | Checks exports against the source feed and optionally samples the MBTA API. |
+| `itinerary.py` | In-progress network geometry and itinerary-evaluation prototype; verify it against B1–B3 before marking those packages complete. |
 | `paths.py` | Resolves shared source-data/output locations from the repository, regardless of working directory. |
 | `requirements.txt` | Python dependencies for building and validating workbooks. |
-| [PLAN.md](PLAN.md) | Data sources, calendar/holiday/overnight semantics, workbook details, and future backend integration. |
+| [PLAN.md](PLAN.md) | Delivery work packages and their completion checks, followed by detailed data sources and schedule semantics. |
 
 There is no separate daily-schedule script today: `build_schedule.py` generates the daily `station_hours.csv.gz` and `service_calendar.csv.gz` tables. They stay part of this project.
+
+## Current status and next work
+
+- **Available:** feed ingestion, daily tables/workbook, single-departure lookup, and export validation.
+- **Next — B1:** define a versioned editor-facing data contract using the existing exports.
+- **B2/B3 in progress:** `itinerary.py` begins network/transfer and itinerary-evaluation work; the completion examples below still need verification.
+- **Later — B4:** extend the same contract and evaluator to Silver Line without changing saved rail-rehearsal semantics.
+
+See [the delivery plan](PLAN.md#delivery-plan) for tasks, dependencies, and evidence needed to mark each package complete. Keep the established single-departure lookup, explorer JSON endpoints, and new itinerary prototype distinct in status and validation claims.
 
 ## Run from the repository root
 

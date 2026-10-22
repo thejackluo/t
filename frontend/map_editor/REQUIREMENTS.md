@@ -1,12 +1,14 @@
 # First application: Google Maps segment planner
 
-**Status:** requirements discussion captured on 2026-10-21; application implementation has not started.
+**Status:** requirements discussion captured on 2026-10-21; early prototype implementation is in progress. Delivery/completion checks are tracked separately in PLAN.md.
 
 This document records the current discussion and supplies the authoritative frontend decisions alongside the broader [design overview](../../docs/INTERACTIVE-MAP-PLAN.md). Google Maps supersedes the earlier schematic-first option. The earlier roadmap is archived reference material, not an active execution plan. The sequence below is a proposed first-application plan, not completed work.
 
+For task breakdown, dependencies, and completion checks, use [PLAN.md](PLAN.md). This document defines expected behavior; the plan defines how to deliver it.
+
 ## Goal
 
-Build a Boston-centered Google Maps workspace where the team can create and revise a connected journey using rail rides and outdoor running/walking links, then see the scheduled/estimated elapsed time and station coverage. Use the existing Agent2 scheduling artifacts as inputs. Manual experimentation comes before automatic all-stations optimization.
+Build a Boston-centered Google Maps workspace where the team can create and revise a connected journey using rail rides and outdoor running/walking links, then see the scheduled/estimated elapsed time and station coverage. Use the existing rail schedule backend's artifacts as inputs. Manual experimentation comes before automatic all-stations optimization.
 
 ## Confirmed in discussion
 

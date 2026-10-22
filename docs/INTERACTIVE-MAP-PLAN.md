@@ -4,6 +4,8 @@
 
 > **Current direction:** Google Maps canvas with transit overlay, mode-first station-to-station dragging, editable street-running routes, and schedule-based totals. Read the [map editor requirements](../frontend/map_editor/REQUIREMENTS.md), [backend schedule plan](../backend/rail_schedule/PLAN.md), and [supplied Guinness rules](references/GUINNESS-RULES.md) for current decisions. Optional schematic ideas below are exploratory; they do not override the selected Google Maps canvas.
 
+For the actionable breakdown, start with the [frontend delivery plan](../frontend/map_editor/PLAN.md) and [backend work packages](../backend/rail_schedule/PLAN.md#delivery-plan). This overview supplies rationale and ideas rather than a second execution queue.
+
 ## Product direction
 
 **Build a planning cockpit:** a Google Maps view of the subway network, an editable chronological itinerary, and a station-coverage checklist, all reflecting the same transit graph.
@@ -30,7 +32,7 @@ Use the official subway map as a visual reference, then create an editable SVG l
 
 For that optional schematic view, SVG makes station dots, line segments, labels, direction arrows, and route overlays interactive and inspectable. A raster/PDF background can help initial tracing, but clicked pixels must resolve to stable station IDs. The rendering should remain functional without the reference image.
 
-Geographic coordinates are retained for a later street/walking view. Schematic distance is never a walking-distance estimate.
+Geographic coordinates support the selected map and street-running view. Schematic distance is never a walking-distance estimate.
 
 ## 2. The planning screen
 
@@ -180,4 +182,4 @@ The stack is proposed, not installed. No account system or production hosting ch
 4. Review the station inventory and connectivity report before establishing a count.
 5. Render application-owned station handles and routes on the selected Google Maps canvas.
 
-The current delivery steps and acceptance criteria are in the [map editor requirements](../frontend/map_editor/REQUIREMENTS.md). The [original seven-phase roadmap](archive/initial-assistant-work/planning/ROADMAP.md) remains historical reference material.
+The current tasks and dependencies are in the [frontend delivery plan](../frontend/map_editor/PLAN.md); expected behavior remains in the [map editor requirements](../frontend/map_editor/REQUIREMENTS.md). The [original seven-phase roadmap](archive/initial-assistant-work/planning/ROADMAP.md) remains historical reference material.

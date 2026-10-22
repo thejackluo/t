@@ -2,6 +2,8 @@
 
 **Use the explorer first to understand the data; use Excel alongside it for sharing, auditing, and custom calculations.** The application reads the same validated CSV snapshot generated with the workbook, rather than parsing Excel cells.
 
+**Status:** available now. The [backend](../../backend/rail_schedule/PLAN.md#delivery-plan) and [map editor](../../frontend/map_editor/PLAN.md) have separate delivery plans; this utility helps inspect their schedule inputs.
+
 ## Start
 
 ```sh
@@ -45,3 +47,15 @@ node --check utilities/schedule_explorer/static/app.js
 Tests use the generated snapshot and skip with an explicit message if it is absent. The HTTP smoke check verifies the moved static assets and metadata endpoint.
 
 This is a schedule-data explorer utility, not the map editor or a published shared library. The separately specified [interactive map/itinerary editor](../../frontend/map_editor/README.md) and optimizer remain their own product work.
+
+## Maintenance plan
+
+The current explorer is the inspection baseline, not a prerequisite for every new editor feature.
+
+| Work | Trigger/dependency | Completion check |
+|------|--------------------|------------------|
+| Adopt a regenerated snapshot | Backend export refresh | Reload the server; coverage/source labels match the new manifest, and integrity checks use dates served by that snapshot. |
+| Maintain export compatibility | Backend B1 changes a consumed schema | Update the reader and its contract checks together; malformed/incompatible exports have a clear error. |
+| Extend to Silver Line | Backend B4 supplies validated Silver exports | Route/boarding-stop selection and timetable views preserve direction and scope labels; rail-only behavior remains correct. |
+
+The existing tests include examples tied to the recorded October–December 2026 snapshot. Review those dates and expected values when adopting another feed; do not treat unchanged old expectations as validation of new data.
