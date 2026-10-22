@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Explore official MBTA rail schedules, first and last trains, holiday service and scheduled waits.">
+  <title>T Run · Rail explorer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='18' fill='white' stroke='%23162a40' stroke-width='3'/%3E%3Ctext x='20' y='30' text-anchor='middle' font-family='sans-serif' font-weight='bold' font-size='29' fill='%23162a40'%3ET%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="brand" aria-label="T Run home"><span class="t-mark">T</span><strong>T RUN</strong><span class="brand-divider"></span><span class="brand-sub">RAIL EXPLORER</span></a>
+    <div class="top-actions"><span class="snapshot"><span class="status-dot"></span> Published schedule <span class="not-live">· not live</span></span><a class="download-link" href="/download/workbook">↓ <span>Excel workbook</span></a></div>
+  </header>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-intro"><span class="eyebrow">YOUR EXPLORATION</span><h2>Pick a line. Find a stop.</h2><p>The whole rail day, in one place.</p></div>
+      <fieldset class="lines"><legend class="field-label">RAIL LINE</legend><div id="route-buttons" class="route-grid"></div></fieldset>
+      <label class="field-label" for="station-search">FIND A STATION <span id="station-count"></span></label>
+      <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="station-search" type="search" placeholder="Search stations…" autocomplete="off"></div>
+      <div id="station-list" class="station-list" aria-label="Stations"></div>
+      <div class="sidebar-footer"><span class="tiny-tracks"><i></i><i></i><i></i><i></i></span><strong>Rail only. Every branch.</strong><p>Red · Mattapan · Orange · Blue<br>Green B / C / D / E</p></div>
+    </aside>
+    <main id="main">
+      <div class="page-heading"><div><div class="eyebrow">BOSTON, BY THE TIMETABLE</div><h1>Know your next move.</h1><p>Explore first trains, last calls, and everything in between.</p></div><button id="share" class="button secondary">↗ Copy view link</button></div>
+      <section class="date-panel" aria-label="Service date">
+        <div class="date-main"><label class="field-label" for="service-date">SERVICE DATE</label><div class="date-controls"><button id="previous-date" class="arrow" aria-label="Previous service date">‹</button><input id="service-date" type="date"><button id="next-date" class="arrow" aria-label="Next service date">›</button></div></div>
+        <div class="date-presets" id="presets"></div>
+        <div class="coverage"><span class="field-label">PUBLISHED COVERAGE</span><span id="coverage-dates">Loading…</span></div>
+      </section>
+      <div id="notice" role="status" class="notice" hidden></div>
+      <div id="load-state" class="load-state" role="status">Loading the official rail snapshot…</div>
+      <div id="content" hidden>
+        <section class="station-heading"><div><div class="station-kicker"><span id="line-badge" class="line-badge"></span><span id="station-id"></span></div><h2 id="station-name"></h2><p id="service-pattern"></p></div><div class="view-filters"><label>Direction<select id="direction"></select></label><label>Destination<select id="destination"><option value="">Any destination</option></select></label></div></section>
+        <section class="stats" aria-label="Daily service summary" id="stats"></section>
+        <nav class="tabs" aria-label="Explorer views"><button class="tab active" data-tab="timeline" aria-selected="true">Departure timeline</button><button class="tab" data-tab="compare" aria-selected="false">Compare days</button><button class="tab" data-tab="stations" aria-selected="false">All stations</button><button class="tab" data-tab="about" aria-selected="false">About the data</button></nav>
+        <section id="view-timeline" class="view">
+          <div class="timeline-layout"><section class="panel frequency-panel"><div class="panel-heading"><div><span class="eyebrow">THE SHAPE OF YOUR DAY</span><h3>Departures by hour</h3></div><span class="subtle">Click an hour to explore</span></div><div id="histogram" class="histogram"></div><div class="chart-footer"><span><i class="legend-dot"></i> Boardable scheduled departures</span><button id="clear-hour" class="text-button" hidden>Show all hours ×</button></div></section>
+          <section class="panel wait-panel"><span class="eyebrow">WHEN WOULD YOU BOARD?</span><h3>Your scheduled wait</h3><label for="ready-time">Arrive at the platform at</label><div class="time-input"><input id="ready-time" type="text" inputmode="numeric" value="08:00:00" placeholder="HH:MM:SS" aria-describedby="time-help"><button id="calculate-wait" class="button primary">Find train →</button></div><div id="wait-result" aria-live="polite"></div><p id="time-help" class="micro">Use 25:15:00 for 1:15 AM after this service date. Waits use the selected direction and destination.</p></section></div>
+          <section class="panel departures-panel"><div class="panel-heading"><div><span class="eyebrow">THE DETAILS BEHIND THE DOTS</span><h3 id="departure-heading">Scheduled departures</h3></div><button id="export" class="button secondary">↓ Export this view</button></div><div class="table-scroll"><table><thead><tr><th scope="col">Departure</th><th scope="col">Destination</th><th scope="col">Gap from previous</th><th scope="col">Platform ID</th><th scope="col">Trip ID</th></tr></thead><tbody id="departure-rows"></tbody></table></div><div class="table-footer"><span id="departure-count"></span><button id="show-more" class="text-button">Show more departures ↓</button></div></section>
+        </section>
+        <section id="view-compare" class="view" hidden><section class="panel"><div class="panel-heading"><div><span class="eyebrow">SAME STATION. DIFFERENT DAYS.</span><h3>Find the pattern, spot the exception.</h3><p class="subtle">Your direction and destination stay selected. Click a date to explore its trains.</p></div><label class="inline-filter">Show<select id="compare-filter"><option value="all">All published days</option><option value="holiday">Holidays & special dates</option><option value="weekend">Weekends</option></select></label></div><div class="table-scroll"><table><thead><tr><th>Date / service pattern</th><th>First train</th><th>Last train</th><th>Departures</th><th>Median gap</th></tr></thead><tbody id="compare-rows"></tbody></table></div></section></section>
+        <section id="view-stations" class="view" hidden><section class="panel"><div class="panel-heading"><div><span class="eyebrow">LOOK ALONG THE LINE</span><h3 id="directory-heading">Station service</h3><p class="subtle">Selected date and direction · all destinations. Click a station to explore.</p></div></div><div class="table-scroll"><table><thead><tr><th>Station</th><th>First train</th><th>Last train</th><th>Departures</th><th>Median gap</th></tr></thead><tbody id="directory-rows"></tbody></table></div></section></section>
+        <section id="view-about" class="view" hidden><div id="about-content"></div></section>
+        <footer class="data-footer"><span><span class="status-dot"></span> Official MBTA GTFS · scheduled estimates</span><span>Local snapshot · <a href="https://www.mbta.com/developers/gtfs" target="_blank" rel="noreferrer">Source & documentation ↗</a></span></footer>
+      </div>
+    </main>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
