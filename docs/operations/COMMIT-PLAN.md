@@ -18,6 +18,8 @@ The series was not pushed by that task. Remote: <https://github.com/thejackluo/t
 
 ## Boundaries for future commits
 
+The current map-editor implementation was committed as a separate **[three-commit series](MAP-EDITOR-COMMIT-PLAN.md)** covering backend routing/evaluation, the route studio/Google integration, and setup documentation. The linked document records the exact scopes, verification, and resulting hashes; publishing remains a separate user instruction.
+
 | Change | Primary scope | Review/check |
 |--------|---------------|--------------|
 | Documentation/planning | Root/project guides and the specific plans changed | Correct status, links, dependencies, and separation of confirmed choices from proposals. |

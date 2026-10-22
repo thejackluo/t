@@ -8,11 +8,13 @@ Planning belongs to the project that owns the work. Shared rules, repository ope
 |----------|------|
 | What works now, and what comes next? | [Root README](../README.md) |
 | How do I run a component? | That component's README |
+| How do I use route studio, connect Google Maps, or export to My Maps? | [Map editor usage](../frontend/map_editor/USAGE.md) |
 | What should the map editor do? | [Frontend REQUIREMENTS](../frontend/map_editor/REQUIREMENTS.md) |
 | What are the next tasks, their dependencies, and completion checks? | [Frontend PLAN](../frontend/map_editor/PLAN.md), [backend PLAN](../backend/rail_schedule/PLAN.md#delivery-plan) |
 | Why is the design shaped this way? | [Design overview](INTERACTIVE-MAP-PLAN.md) |
 | What rules apply to the attempt? | [Guinness reference](references/GUINNESS-RULES.md) |
 | What was committed, and how should future work be split? | [Git operations](operations/COMMIT-PLAN.md) |
+| How was the new map-editor implementation committed? | [Map editor commit plan](operations/MAP-EDITOR-COMMIT-PLAN.md) |
 
 ## Document ownership
 

@@ -1,13 +1,21 @@
 # Map editor frontend project
 
-**Status:** requirements captured; early local-server prototype work is in progress. The end-to-end editor milestone is not yet verified.
+**Status:** the initial local route studio is implemented and tested with the own-data geographic preview and a live Google Maps canvas using a user-supplied restricted browser key held only in tab session storage. Pedestrian street suggestions (Routes API) and KML import into the private My Maps project remain unverified. The full F1–F5 milestone remains partly implemented.
 
 **Responsibility:** the Boston-centered Google Maps workspace for drawing and revising a connected itinerary, viewing timing and station coverage, and comparing route ideas.
 
 - [REQUIREMENTS.md](REQUIREMENTS.md) defines **what** the editor should do: confirmed user decisions, proposed defaults, and acceptance behavior.
 - [PLAN.md](PLAN.md) breaks down **how to deliver it**: F1–F5 work packages, backend dependencies, and completion checks. None is marked verified-complete by this documentation update.
 
-`server.py` begins the local editor server and integrates the backend itinerary prototype. Treat it as ongoing implementation rather than a validated replacement for the working schedule explorer.
+`server.py` serves the route studio and integrates the backend geometry/timetable evaluator. The schedule explorer remains the separate data-inspection utility.
+
+## Run the route studio
+
+```sh
+python3 -m frontend.map_editor.server
+```
+
+Open **http://127.0.0.1:8001** with the existing schedule exports and their pinned GTFS archive available. The own-data geographic preview supports track-following rail routes, editable foot links, feasible timetable evaluation, saving, and KML export for your Google My Maps project. A browser key enables the embedded Google canvas. See **[setup, usage, API contract, and verified boundaries](USAGE.md)**. This initial version does not yet complete every F1–F5 acceptance item.
 
 The [interactive-map design overview](../../docs/INTERACTIVE-MAP-PLAN.md) provides the wider architecture and brainstorming context.
 

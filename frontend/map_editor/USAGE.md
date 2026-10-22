@@ -1,0 +1,88 @@
+# Route studio: run, create, and export
+
+## Start
+
+With **Python 3.11+**, the existing schedule exports, and their matching archived GTFS ZIP:
+
+```sh
+python3 -m frontend.map_editor.server
+```
+
+Open **http://127.0.0.1:8001**. No third-party Python or JavaScript packages are required. Defaults resolve from file locations, so direct invocation also works from another directory:
+
+```sh
+python3 /path/to/t/frontend/map_editor/server.py --port 8001
+```
+
+The server reads repository-level `output/manifest.json`, scheduling CSVs, and the archive named by its `local_archive` field. It verifies the archive hash before combining shapes and timetables. `--data` and `--gtfs` override these paths; an unmatched archive is rejected. Generate missing artifacts using the [backend guide](../../backend/rail_schedule/README.md).
+
+## Create a route
+
+1. Choose the service date and platform-ready time. `25:15` means 1:15 AM after the selected service date. Use a date within the imported coverage.
+2. Choose **Ride**, then select endpoints with search/dropdowns, click station handles, or drag from one station to another. Station positions stay fixed.
+3. **Preview rail paths**, inspect alternatives, and **Add selected path to itinerary**. Rail paths use actual directed MBTA GTFS shapes, including intermediate stops. They do not use road directions or station-to-station chords.
+4. Extend the current endpoint. **Replace**, move-up/down, **Delete**, **Undo**, and **Redo** revise the itinerary. Disconnected changes block subsequent timing and coverage until repaired.
+5. For **Run/Walk**, add a foot connection and choose **Edit foot path**. In the preview, click to insert waypoints and drag interior purple handles. On Google Maps, use editable polyline handles. Coordinates can also be edited directly. **Reset sketch** returns to a two-point user-owned sketch.
+6. The evaluator chooses feasible trains for the selected pattern and date, preserving branches, platforms, trip/service IDs, stop permissions, intermediate calls, and same-train continuity. Changing an earlier foot path, pace, time, or transfer buffer recomputes downstream boardings.
+7. **Save** stores a named candidate in this browser; **Duplicate** creates a new candidate. JSON import/export is portable and dataset-pinned. CSV exports the evaluated itinerary with original `24+` service times. Scenarios are not written to the repository.
+
+The example button creates **Alewife → Park Street → Kenmore → Fenway**, including a real platform transfer and an outdoor running sketch to edit.
+
+## Put routes into your Google My Maps project
+
+Reference: [your Google My Maps project](https://www.google.com/maps/d/u/0/edit?mid=1uOrMD32-8alM_w2tyQ-Xio6b6jcxRyk).
+
+1. Create the itinerary here and click **Export to My Maps**.
+2. Open the Google My Maps project and sign in.
+3. Choose **Add layer → Import**, then upload the downloaded KML.
+
+Imported rail lines follow MBTA track shapes and retain ordered segment names and intermediate-stop descriptions. For a separate reference layer, download **[all MBTA rail tracks and stations](http://127.0.0.1:8001/api/export/network.kml)** from the running server or Help dialog.
+
+My Maps does not automatically snap arbitrary hand-drawn lines to subway tracks. Generate rail paths in route studio and import their geometry. Moving/deleting their vertices inside My Maps can change that geometry. Export/import is manual; the editor does not sign into Google, modify the private project, or synchronize changes back from it. The supplied project redirected the test browser to Google sign-in, so import into the private project has not been verified.
+
+## Connect the embedded Google Maps canvas
+
+Choose **Connect Google Maps** for a step-by-step Google Cloud setup guide, paste a restricted browser key, and select **Load Google Maps**. The key stays in this browser tab's session storage, including reloads, outside scenario saves/exports. Alternatively configure the environment:
+
+```sh
+GOOGLE_MAPS_API_KEY="your-browser-key" python3 -m frontend.map_editor.server
+```
+
+Enable **Maps JavaScript API**, configure billing, and allow `http://127.0.0.1:8001/*` (and `http://localhost:8001/*` if used). Enable the current **Routes API** integration for **Suggest streets** on a foot segment; it uses `google.maps.routes.Route.computeRoutes` in walking mode. Google billing/quotas apply to provider-backed operations.
+
+`TransitLayer` supplies background transit context. Application-owned station handles and MBTA shapes drive selection/editing; supported editable `Polyline`s are used rather than the retired Drawing Library.
+
+Without a key, the clearly labelled **geographic track preview** supports route creation, foot editing, timing, and KML export. It is an own-data geographic view, not Google Maps or a street basemap. Authentication failure returns to that preview. The Google canvas was verified with a user-supplied restricted browser key; pedestrian street suggestions and private My Maps import still need live verification.
+
+Google-derived pedestrian paths remain **session-only**. Autosave/JSON replace them with an explicitly labelled endpoint sketch; KML omits those foot paths. User-drawn foot geometry and MBTA rail geometry are saved/exported. Inspect pedestrian suggestions for entrances, crossings, and access: a station center is not a verified entrance.
+
+## Timing, coverage, and current boundaries
+
+- Times are **scheduled non-timepoint estimates**, not live predictions or observations. Display labels use America/New_York service hours; elapsed arithmetic preserves `24+` hours. The evaluator does not invent the next service day's timetable.
+- **Plan duration** includes preparation from the platform-ready time. The first-train departure → last-train arrival proxy is separate. These are schedule proxies, not measured doors-closing/platform-footfall events or validated boundary allowances. Foot travel after the last ride is outside that rail-clock proxy.
+- Transfers use **directed GTFS platform rules/pathways**, including trip-specific prohibitions and minimums. Park Street–Downtown Crossing passage transfers retain separate station IDs. Missing pathway walk time uses length / **1.2 m/s** as a provisional estimate. Minimum transfer time is a floor, not a second walk cost. Additional buffer defaults to **30 seconds**.
+- Station entry/exit defaults to **60 seconds each**, applied at necessary foot/rail boundaries. Consecutive foot links do not repeatedly enter/exit intermediate stations. Running defaults to **6 min/km**, walking to **12 min/km**. Two-point foot sketches are unverified straight-line estimates.
+- Coverage derives from successfully evaluated ride calls, including intermediate stations. Foot-only visits and blocked/unavailable suffixes add no rail coverage. Failed legs leave totals for the feasible prefix only.
+- Candidate search is bounded to **four rides and three displayed alternatives**, ranked by representative ride durations and a transfer penalty. It is not an optimizer or proof of fastest travel. Exact feasible departures are evaluated after selection; a path with no remaining service requires another option/date/time.
+- The rail inventory is a **rehearsal**, not the approved Guinness list. Silver Line, the official inventory, endpoint/boundary refinements, explicit break/manual-duration legs, calibrated entrance costs, endpoint pins, comparison views, optimization, and attempt-day tools remain further work.
+
+## Local API and scenario contract
+
+- `GET /api/network`: stable station IDs, coordinates, routes, track shapes, source manifest, available service dates, and rail-rehearsal ruleset.
+- `GET /api/options?from=place-alfcl&to=place-aport&date=2026-10-22`: alternatives expanded into ride records with pattern/start/end indices, platform IDs, intermediate station IDs, and clipped shapes. Optional `route=Red` constrains selection to one line.
+- `POST /api/evaluate`: scenario object; returns canonical legs, scheduled trip/platform calls, separate wait/transfer/access events, feasible coverage, and component totals. Blocked/unavailable legs retain explicit status/reason.
+- `POST /api/export/kml`: scenario → KML containing MBTA/user-owned path geometry.
+- `GET /api/export/network.kml`: entire rail track/station reference layer.
+- `GET /api/config`: local browser-key configuration and the user's My Maps URL. No browser key appears in scenario payloads.
+
+Saved JSON uses `schema: 1`, a stable scenario `id`, `name`, pinned dataset SHA-256, `ruleset: "rail-rehearsal-v1"`, `date`, service `time`, editable `assumptions`, and ordered `legs`. Ride legs retain `pattern`, `start`, and `end`; the backend reconstructs their authoritative platforms, stations, and geometry. Foot legs retain mode, fixed station endpoints, user points, and geometry provenance. JSON imports reject incompatible dataset/ruleset/schema identities and are recomputed.
+
+## Verification
+
+```sh
+python3 -m unittest backend.rail_schedule.test_itinerary frontend.map_editor.test_server utilities.schedule_explorer.test_explore
+node --check frontend/map_editor/static/app.js
+node --check frontend/map_editor/static/map.js
+```
+
+Tests cover shape geometry, destination-specific waits against the existing lookup, cross-line and directed/trip-specific transfers, same-train continuity, missed trains after foot-time changes, disconnected coverage, overnight/unpublished service, KML coordinates, and HTTP delivery. They require the generated snapshot/archive; a skip is not validation. Browser checks cover the own-data preview, route workflow, and live Google canvas (track/station alignment, map-handle selection, reload reconnection from session storage). Pedestrian street suggestions and KML import into the private My Maps project still need live verification; the operator-supplied key was never stored in the repository or scenarios.

@@ -8,9 +8,9 @@ Plan an all-stations Boston MBTA journey, experiment with rail and running conne
 |------|--------|---------|
 | [Rail schedule backend](backend/rail_schedule/README.md) | Working Python tools | Import official schedules, generate the workbook/daily tables, look up scheduled waits, and validate exports. |
 | [Schedule explorer](utilities/schedule_explorer/README.md) | Working local browser utility | Inspect stations, departures, holidays, and scheduled waits using those exports. |
-| [Map editor](frontend/map_editor/README.md) | Early prototype work in progress | Build a Google Maps workspace for connected Ride/Run itineraries, timing, and coverage; delivery criteria remain to be verified. |
+| [Map editor](frontend/map_editor/README.md) | Working local prototype; live Google canvas verified | Create track-following rail/run/walk itineraries, evaluate schedules/coverage, save candidates, and export to Google My Maps. |
 
-Routing/evaluation work has begun in `backend/rail_schedule/itinerary.py`, with a local editor server in `frontend/map_editor/server.py`. Their presence is not yet evidence that the end-to-end editor/evaluator milestone is complete. Automatic route optimization and the attempt-day companion remain later work. The explorer is a separate data-inspection tool, not the map editor.
+Routing/evaluation is in `backend/rail_schedule/itinerary.py`, with the route studio in `frontend/map_editor/server.py`. Its own-data preview, timetable/KML workflows, and live Google canvas (with a user-supplied restricted browser key) are verified; pedestrian street suggestions and private My Maps import still need live verification. The full editor milestone still has remaining criteria, including candidate comparison and refined timing/access controls. Automatic optimization and the attempt-day companion remain later work.
 
 ## Repository layout
 
@@ -27,6 +27,16 @@ output/                       Shared generated exports/workbook (ignored by Git)
 ```
 
 ## Try the working tools
+
+### Map route studio
+
+```sh
+python3 -m frontend.map_editor.server
+```
+
+Open **http://127.0.0.1:8001** to create track-following rail/run/walk itineraries and export KML for Google My Maps. Requires Python 3.11+, generated schedule exports, and their pinned GTFS archive. The geographic preview works without a browser key; a configured key enables the Google Maps canvas. [Editor setup and usage](frontend/map_editor/USAGE.md).
+
+### Schedule explorer
 
 From the repository root, with the generated exports already in `output/`:
 
@@ -50,7 +60,7 @@ The first application milestone is **one editable, saved rail-rehearsal itinerar
 | 4 | Evaluate feasible departures and recalculate downstream timing after an edit. | Backend **B3**, integrated in frontend **F4**. |
 | 5 | Save/reload candidates and compare time, coverage, transfers, and running distance. | Frontend **F5**. |
 
-**Next concrete task:** agree the B1/F1 data contract using the existing exports, then produce a small end-to-end example. The Google map shell can be developed in parallel once its station input is understood.
+**Next concrete task:** verify pedestrian street suggestions (Routes API) and import an exported KML into the private My Maps project, then close the remaining milestone acceptance gaps. Review the [implemented API/scenario contract and example](frontend/map_editor/USAGE.md) against B1/F1. The [implementation commit plan](docs/operations/MAP-EDITOR-COMMIT-PLAN.md) defines the source-control sequence.
 
 - [Backend delivery plan](backend/rail_schedule/PLAN.md#delivery-plan): data contract → graph → timetable evaluator.
 - [Frontend delivery plan](frontend/map_editor/PLAN.md): input contract → map → editing → timing → persistence/comparison.
