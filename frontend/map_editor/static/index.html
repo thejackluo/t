@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>T Run · Map & route studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='18' fill='white' stroke='%23162a40' stroke-width='3'/%3E%3Ctext x='20' y='30' text-anchor='middle' font-family='sans-serif' font-weight='bold' font-size='29'%3ET%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="roundel">T</span><div><strong>Route studio</strong><small>MBTA · map & itinerary editor</small></div></div>
+    <div class="scenario-controls">
+      <label>Scenario<input id="scenario-name" value="Boston rail rehearsal" maxlength="100"></label>
+      <label>Service date<input id="service-date" type="date"></label>
+      <label>Platform ready<input id="start-time" value="08:00" inputmode="numeric" title="Service HH:MM; 24+ hours supported"></label>
+    </div>
+    <div class="header-actions"><button id="save">Save</button><button id="export-kml" class="primary">Export to My Maps ↗</button><button id="help-open" aria-label="Help and Google Maps setup">?</button></div>
+  </header>
+  <div id="message" role="status" aria-live="polite" hidden></div>
+  <main class="workspace">
+    <aside class="builder panel">
+      <div class="section-heading"><span class="eyebrow">01 / BUILD A CONNECTION</span><button id="reset-endpoints" class="text-button">Reset</button></div>
+      <h1>Follow the tracks.<br>Make it your route.</h1>
+      <p class="muted">Choose a mode, then click two stations or drag between them. Tracks stay fixed.</p>
+      <fieldset class="mode-picker"><legend class="sr-only">Connection mode</legend><label><input type="radio" name="mode" value="ride" checked><span>▰ Ride</span></label><label><input type="radio" name="mode" value="run"><span>↗ Run</span></label><label><input type="radio" name="mode" value="walk"><span>↝ Walk</span></label></fieldset>
+      <label class="field">From station<input id="from-search" list="station-options" placeholder="Search a station…" autocomplete="off"><select id="from-station" aria-label="From station"></select></label>
+      <div class="connection-line"><span>↓</span><button id="swap" class="text-button">Swap endpoints ⇅</button></div>
+      <label class="field">To station<input id="to-search" list="station-options" placeholder="Search a station…" autocomplete="off"><select id="to-station" aria-label="To station"></select></label>
+      <datalist id="station-options"></datalist>
+      <label class="field" id="route-field">Rail preference<select id="line-filter"><option value="">All rail lines · transfers allowed</option></select></label>
+      <button id="find-routes" class="primary wide">Preview rail paths →</button>
+      <div id="editing-banner" class="notice" hidden></div>
+      <div id="path-options" aria-live="polite"><p class="empty-copy">Your path options will appear here. Rail paths include every intermediate station.</p></div>
+      <button id="add-path" class="primary wide" hidden>Add selected path to itinerary</button>
+      <details class="assumptions"><summary>Timing assumptions</summary><div class="assumption-grid">
+        <label>Run min/km<input id="run-pace" type="number" value="6" min="2" max="30" step="0.5"></label>
+        <label>Walk min/km<input id="walk-pace" type="number" value="12" min="4" max="40" step="0.5"></label>
+        <label>Transfer buffer · sec<input id="transfer-buffer" type="number" value="30" min="0" max="1800"></label>
+        <label>Entry / exit · sec each<input id="access-time" type="number" value="60" min="0" max="1800"></label>
+      </div><p>Indoor walking uses directed GTFS pathways; missing speeds are provisional. All foot times are estimates.</p></details>
+      <div class="saved-area"><label class="field">Saved candidates<select id="saved-scenarios"><option value="">Choose a saved scenario…</option></select></label><div class="button-row"><button id="load">Load</button><button id="duplicate">Duplicate</button><button id="import-json">Import JSON</button></div><input id="json-file" type="file" accept="application/json,.json" hidden></div>
+    </aside>
+    <section class="map-panel" aria-label="MBTA route map">
+      <div class="map-toolbar"><span id="map-status"><i></i> Geographic track preview</span><div><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="fit-map">Fit route</button><button id="google-open">Connect Google Maps</button></div></div>
+      <div id="map"><div class="map-loading">Loading official MBTA tracks…</div></div>
+      <div class="map-caption"><strong id="map-instruction">Click a starting station</strong><span>Rail paths: official MBTA GTFS · station positions are fixed</span></div>
+      <div class="map-legend" id="map-legend"></div>
+      <div class="coverage-strip"><div><span class="eyebrow">PLANNED RAIL COVERAGE</span><strong id="coverage-count">0 / 125</strong><small>Rail rehearsal · Silver Line required for full attempt</small></div><button id="coverage-open">View missing stations →</button></div>
+    </section>
+    <aside class="itinerary panel">
+      <div class="section-heading"><span class="eyebrow">02 / YOUR ITINERARY</span><div><button id="undo" title="Undo" disabled>↶</button><button id="redo" title="Redo" disabled>↷</button></div></div>
+      <div class="totals"><div><span>Plan duration</span><strong id="total-time">—</strong></div><div><span>Train / foot</span><strong id="mode-times">—</strong></div><div><span>Wait / transfers & access</span><strong id="wait-times">—</strong></div></div>
+      <p id="timing-note" class="muted">Choose a date and platform-ready service time. Schedules are estimates, not live predictions.</p>
+      <div id="itinerary-legs"><div class="empty-state"><span>↳</span><h2>A blank canvas.<br>A connected journey.</h2><p>Preview a connection on the left, then add it here. Every subsequent connection extends your endpoint.</p><button id="demo">Try a Red → Green → Run example</button></div></div>
+      <div class="itinerary-footer"><button id="export-json">Export JSON</button><button id="export-csv">Export CSV</button><button id="clear" class="danger">Clear</button></div>
+    </aside>
+  </main>
+  <dialog id="help-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close help">×</button></form><span class="eyebrow">GOOGLE MAPS & MY MAPS</span><h2>Your tracks, on the map.</h2>
+    <p><strong>Use your existing Google My Maps project:</strong></p><ol><li>Create your itinerary here, then choose <strong>Export to My Maps</strong>.</li><li><a id="my-maps-link" target="_blank" rel="noopener">Open your Google My Maps project ↗</a> and sign in.</li><li>Choose <strong>Add layer → Import</strong>, then select the downloaded KML file. Rail lines follow MBTA track shapes.</li></ol>
+    <p>Want the whole rail network as a reference layer? <a href="/api/export/network.kml">Download MBTA rail tracks & stations KML</a>. Keep it in a separate My Maps layer. My Maps does not automatically snap newly drawn lines to subway tracks; create the rail paths here and import them.</p>
+    <hr><h3>Google map inside this editor</h3><ol><li><a href="https://console.cloud.google.com/google/maps-apis/start" target="_blank" rel="noopener">Open Google Maps Platform setup ↗</a>. Sign in, create/select a project, and attach billing.</li><li>Enable <a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" rel="noopener">Maps JavaScript API</a>.</li><li>Open <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">APIs & Services → Credentials</a>, choose <strong>Create credentials → API key</strong>, and edit the key.</li><li>Under application restrictions choose <strong>Websites</strong>. Add <code>http://127.0.0.1:8001/*</code> and <code>http://localhost:8001/*</code>.</li><li>Under API restrictions choose <strong>Restrict key → Maps JavaScript API</strong>, then save. Allow a few minutes for changes to apply.</li><li>Paste the browser key below and load the map. Google Maps becomes the background; your MBTA tracks and itinerary stay on top.</li></ol><p>The key stays in this browser tab, including reloads, and is not included in scenario saves or exports. For <strong>Suggest streets</strong>, also enable <a href="https://console.cloud.google.com/apis/library/routes.googleapis.com" target="_blank" rel="noopener">Routes API</a> and add it to the key's API restrictions.</p>
+    <label class="field">Google Maps browser key<input id="google-key" type="password" autocomplete="off" placeholder="Paste your local browser key"></label><button id="connect-google" class="primary">Load Google Maps</button><p id="google-feedback" role="status"></p>
+    <h3>Editing foot paths</h3><p>Select <strong>Edit foot path</strong> on a run/walk segment. Click the preview map to add waypoints; drag the purple handles to move them. On Google Maps, drag its editable path handles. A two-point sketch is straight-line geometry, not a verified street route. Google pedestrian suggestions are session-only and are omitted from geometry exports.</p>
+    <h3>Time conventions</h3><p>Times are America/New_York service hours: <strong>25:15</strong> is 1:15 AM the next day. Date changes recompute every connection. Plan duration includes preparation; the first-train → last-platform schedule proxy is shown separately. Actual door/platform boundary allowances are not measured here.</p><p id="source-info" class="muted"></p>
+  </dialog>
+  <dialog id="coverage-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close coverage">×</button></form><span class="eyebrow">RAIL REHEARSAL INVENTORY</span><h2>Every stop has a story.</h2><p>Coverage comes from feasible ridden train stops, including intermediate stations. Foot links do not earn rail coverage. This imported rail list is not the approved Guinness inventory.</p><div id="coverage-list"></div></dialog>
+</body>
+</html>
