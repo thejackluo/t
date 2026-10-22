@@ -1,0 +1,26 @@
+# Generated, reproducible GSD installation
+.opencode/
+
+# Application dependencies and build output
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Local credentials and machine files
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+
+# Downloaded feeds, generated datasets, and private attempt evidence
+data/raw/
+data/generated/
+data/*.zip
+output/
+evidence/
+
+# Python scheduling workbook tooling
+.venv/
+__pycache__/
