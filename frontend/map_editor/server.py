@@ -92,7 +92,7 @@ def get_response(network, path, query):
     if path == '/api/config':
         return 200, JSON_MIME, {'google_maps_key': os.environ.get('GOOGLE_MAPS_API_KEY', ''), 'my_maps_url': MY_MAP}, None
     if path == '/api/options':
-        return 200, JSON_MIME, network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', '')), None
+        return 200, JSON_MIME, network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', ''), query.get('time', '')), None
     if path == '/api/export/network.kml':
         return 200, 'application/vnd.google-earth.kml+xml', network_kml(network), 'MBTA-rail-tracks.kml'
     if path in ASSETS:
