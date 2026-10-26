@@ -26,12 +26,20 @@ async function request(url,body){
   const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed.');return result;
 }
 function name(id){return stations[id]?.name||id;}
-function tabKey(value){try{if(value===null)sessionStorage.removeItem('t-run-google-key');else if(value!==undefined)sessionStorage.setItem('t-run-google-key',value);return sessionStorage.getItem('t-run-google-key')||'';}catch{return '';}}
+const KEY='t-run-google-key';
+function storedKey(value,remember){
+  // null forgets everywhere; a value is kept on this device (localStorage) or for this tab only (sessionStorage).
+  try{
+    if(value===null){localStorage.removeItem(KEY);sessionStorage.removeItem(KEY);}
+    else if(value!==undefined){(remember?localStorage:sessionStorage).setItem(KEY,value);(remember?sessionStorage:localStorage).removeItem(KEY);}
+    return localStorage.getItem(KEY)||sessionStorage.getItem(KEY)||'';
+  }catch{return '';}
+}
 function currentMode(){return document.querySelector('[name=mode]:checked').value;}
-function assumptions(){return {run_pace:+$('run-pace').value,walk_pace:+$('walk-pace').value,buffer:+$('transfer-buffer').value,access:+$('access-time').value};}
+function assumptions(){return {run_pace:+$('run-pace').value,walk_pace:+$('walk-pace').value,buffer:+$('transfer-buffer').value,access:+$('access-time').value,station_change:+$('station-change').value};}
 function syncInputs(){
   $('scenario-name').value=scenario.name;$('service-date').value=scenario.date;$('start-time').value=scenario.time;
-  const a=scenario.assumptions;$('run-pace').value=a.run_pace;$('walk-pace').value=a.walk_pace;$('transfer-buffer').value=a.buffer;$('access-time').value=a.access;
+  const a=scenario.assumptions;$('run-pace').value=a.run_pace;$('walk-pace').value=a.walk_pace;$('transfer-buffer').value=a.buffer;$('access-time').value=a.access;$('station-change').value=a.station_change??120;
 }
 function serializable(value=scenario){
   const result=clone(value);
@@ -62,7 +70,7 @@ function pickStation(id){
   if($('from-station').value===id){notify(`${name(id)} is your starting station. Choose another station as the destination.`);return;}
   setEndpoint('to',id);findPaths().catch(error=>notify(error.message,'error'));
 }
-async function findPaths(){
+async function findPaths(quiet=false){
   const from=$('from-station').value,to=$('to-station').value;
   if(!from||!to||from===to)throw Error('Choose two different stations first.');
   const serial=++optionsSerial;
@@ -76,7 +84,7 @@ async function findPaths(){
       choices=[{label:currentMode()==='run'?'Outdoor run':'Outdoor walk',transfers:0,legs:[{mode:currentMode(),from,to,
         geometry:[stations[from].point,stations[to].point],geometry_source:'straight_line_sketch',stations:[]}]}];
     }
-    choice=0;renderOptions();renderMap();map.fit();
+    choice=0;renderOptions();renderMap();if(!quiet)map.fit();
   }finally{$('find-routes').disabled=false;$('find-routes').textContent=currentMode()==='ride'?'Preview rail paths →':'Preview foot connection →';}
 }
 function chips(legs){return legs.map(l=>`<span class="chip" style="--route:${colors[l.route]||'#7952c7'}">${esc(l.route||l.mode.toUpperCase())}</span>`).join('<span aria-hidden="true">›</span>');}
@@ -101,7 +109,7 @@ function addPath(){
 }
 function renderMap(){
   if(!map)return;
-  map.setState({legs:scenario.legs,preview:choices[choice]?.legs||[],covered:new Set(evaluation?.covered||[]),
+  map.setState({legs:scenario.legs,preview:choices[choice]?.legs||[],covered:new Set(evaluation?.covered||[]),evaluated:evaluation?.legs||[],
     from:$('from-station').value,to:$('to-station').value,edit:footIndex});
   $('map-instruction').textContent=footIndex>=0?'Edit foot path: click to add a waypoint; drag purple handles':!$('from-station').value?'Click a starting station':!$('to-station').value?`From ${name($('from-station').value)} → choose your next station`:'Preview a path, then add it to your itinerary';
 }
@@ -110,19 +118,21 @@ function render(){
   $('editing-banner').hidden=replaceIndex<0;$('editing-banner').textContent=replaceIndex<0?'':`Replacing segment ${replaceIndex+1}. Reset to return to appending.`;
   const summary=evaluation?.summary;
   $('total-time').textContent=summary?duration(summary.elapsed):'—';
-  $('mode-times').textContent=summary?`${duration(summary.ride)} / ${duration(summary.run+summary.walk)}`:'—';
+  $('mode-times').textContent=summary?`${summary.estimated_ride?'~':''}${duration(summary.ride+(summary.estimated_ride||0))} / ${duration(summary.run+summary.walk)}`:'—';
   $('wait-times').textContent=summary?`${duration(summary.wait)} / ${duration(summary.transfer+summary.access)}`:'—';
   $('coverage-count').textContent=`${evaluation?.covered.length||0} / ${data.stations.length}`;
   if(evaluation){$('timing-note').textContent=evaluation.status!=='ok'?evaluation.message+(evaluation.summary.estimated?' Segments without a scheduled train use estimated typical ride times; totals are estimates.':''):scenario.legs.length?`Finish ${fmt(summary.finish)} · first-train → last-platform proxy ${duration(summary.record_proxy_seconds)}. Plan duration includes pre-start preparation. Scheduled estimates, not live predictions.`:'Choose a date and platform-ready service time. Schedules are estimates, not live predictions.';}
   $('itinerary-legs').innerHTML=scenario.legs.length?scenario.legs.map((leg,i)=>{
     const evaluated=evaluation?.legs[i],foot=leg.mode!=='ride',status=evaluated?.status||'pending';
     const item=evaluated||leg;
+    const badge=status==='unavailable'?'<span class="leg-badge">estimated</span>':evaluated?.transfer?.fallback?'<span class="leg-badge">est. platform change</span>':'';
+    const stopTimes=!foot&&evaluated?.segments?.length?`<ol class="leg-stop-times">${evaluated.segments.map((s,k)=>`<li><span>${k===0?esc(name(s.from))+' → ':''}${esc(name(s.to))}</span><span>${s.time_kind==='estimated'?'~':''}${duration(s.seconds)}${s.arrival!==undefined?` · arr ${fmt(s.arrival)}`:''}</span></li>`).join('')}</ol>`:'';
     const transfer=evaluated?.transfer_seconds?`<div class="transfer-note">↳ Internal transfer · ${duration(evaluated.transfer_seconds)} · directed platform ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)} (includes buffer)</div>`:'';
     const ids=leg.stations||[];
-    return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route||leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||'Rail ride')}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
+    return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route||leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||'Rail ride')}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
       <div class="leg-timing"><span>${status==='unavailable'?`~${fmt(evaluated.start_time)} → ${fmt(evaluated.estimated_arrival)} (estimated)`:`${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}`}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
       <p class="leg-detail">${foot?`${((item.distance||0)/1000).toFixed(2)} km · ${esc(leg.geometry_source.replaceAll('_',' '))} · ${duration(evaluated?.access_seconds)} entry/exit`:`${ids.length} station calls · ${duration(evaluated?.wait_seconds)} wait${evaluated?.continuous?' · stay on the same train':''}`}</p>
-      ${!foot?`<details><summary>Intermediate stops & train identity</summary><ol class="stop-list">${ids.map(s=>`<li>${esc(name(s))}</li>`).join('')}</ol><p class="leg-detail">${esc(item.trip_id||'Not yet evaluated')}<br>${esc(leg.from_stop)} → ${esc(leg.to_stop)}<br>Shape ${esc(leg.shape_id)} · direction ${esc(leg.direction)}</p></details>`:''}
+      ${!foot?`<details><summary>Intermediate stops & train identity</summary>${stopTimes||`<ol class="stop-list">${ids.map(s=>`<li>${esc(name(s))}</li>`).join('')}</ol>`}<p class="leg-detail">${esc(item.trip_id||'Not yet evaluated')}<br>${esc(leg.from_stop)} → ${esc(leg.to_stop)}<br>Shape ${esc(leg.shape_id)} · direction ${esc(leg.direction)}</p></details>`:''}
       <div class="leg-actions"><button data-action="replace">Replace</button><button data-action="up" aria-label="Move segment ${i+1} up" ${i===0?'disabled':''}>↑</button><button data-action="down" aria-label="Move segment ${i+1} down" ${i===scenario.legs.length-1?'disabled':''}>↓</button>${foot?'<button data-action="edit-foot">Edit foot path</button>':''}<button data-action="remove">Delete</button></div>
       ${foot&&footIndex===i?`<div class="foot-editor"><p>Click the map to add waypoints. Endpoints stay at stations. Coordinates are latitude,longitude, one per line.</p><textarea aria-label="Foot path coordinates">${esc(leg.geometry.map(p=>p.join(',')).join('\n'))}</textarea><div><button data-action="apply-foot">Apply coordinates</button> <button data-action="suggest-foot">Suggest streets ↗</button> <button data-action="reset-foot">Reset sketch</button> <button data-action="done-foot">Done</button></div><p>Google street suggestions are session-only. Inspect entrances and crossings.</p></div>`:''}
       </div>${status==='blocked'||status==='unavailable'?`<div class="leg-error">${esc(item.message)}</div>`:''}</article>`;
@@ -198,9 +208,15 @@ async function boot(){
   $('my-maps-link').href=config.my_maps_url;
   $('source-info').textContent=`Snapshot ${data.dates[0]}–${data.dates.at(-1)} · ${data.stations.length} rail stations · ${data.pattern_count} directed patterns · ${data.manifest.feed_info.feed_version}. All rail calls in this snapshot are scheduled non-timepoint estimates.`;
   syncInputs();savedList();
-  map=new RouteMap($('map'),data,{pick:pickStation,drag:(a,b)=>{setEndpoint('from',a);setEndpoint('to',b);findPaths().catch(e=>notify(e.message,'error'));},foot:updateFoot,
-    googleError:message=>{tabKey(null);$('map-status').innerHTML='<i></i> Geographic track preview';$('google-open').hidden=false;notify(message,'error');}});
-  on('find-routes','click',findPaths);on('add-path','click',addPath);on('reset-endpoints','click',resetEndpoints);
+  let hoverTimer;
+  // Live previews during a drag must not move the map under the pointer; only a completed drag re-fits.
+  const preview=(a,b,quiet)=>{setEndpoint('from',a);setEndpoint('to',b);findPaths(quiet).catch(e=>notify(e.message,'error'));};
+  map=new RouteMap($('map'),data,{pick:pickStation,drag:(a,b)=>{clearTimeout(hoverTimer);preview(a,b,false);},foot:updateFoot,
+    hover:(a,b)=>{clearTimeout(hoverTimer);if(!b||a===b)return;hoverTimer=setTimeout(()=>preview(a,b,true),180);},
+    format:{name,fmt,duration},
+    googleError:message=>{storedKey(null);$('map-status').innerHTML='<i></i> Geographic track preview';$('google-open').hidden=false;notify(message,'error');}});
+  $('origin-hint').textContent=location.origin+'/*';
+  on('find-routes','click',()=>findPaths());on('add-path','click',addPath);on('reset-endpoints','click',resetEndpoints);
   on('swap','click',()=>{const a=$('from-station').value,b=$('to-station').value;setEndpoint('from',b);setEndpoint('to',a);});
   on('line-filter','change',()=>{invalidateOptions();renderMap();});
   document.querySelectorAll('[name=mode]').forEach(input=>input.addEventListener('change',modeChanged));
@@ -209,7 +225,7 @@ async function boot(){
   on('scenario-name','change',()=>mutate(()=>scenario.name=$('scenario-name').value||'Untitled rehearsal'));
   on('service-date','change',()=>{mutate(()=>scenario.date=$('service-date').value);invalidateOptions();renderMap();});
   on('start-time','change',()=>mutate(()=>scenario.time=$('start-time').value));
-  ['run-pace','walk-pace','transfer-buffer','access-time'].forEach(id=>on(id,'change',()=>mutate(()=>scenario.assumptions=assumptions())));
+  ['run-pace','walk-pace','transfer-buffer','access-time','station-change'].forEach(id=>on(id,'change',()=>mutate(()=>scenario.assumptions=assumptions())));
   on('undo','click',()=>{if(!undo.length)return;redo.push(clone(scenario));scenario=undo.pop();evaluation=null;syncInputs();autosave();resetEndpoints();evaluate();});
   on('redo','click',()=>{if(!redo.length)return;undo.push(clone(scenario));scenario=redo.pop();evaluation=null;syncInputs();autosave();resetEndpoints();evaluate();});
   on('clear','click',()=>{mutate(()=>scenario.legs=[]);resetEndpoints();});
@@ -217,9 +233,10 @@ async function boot(){
   ['help-open','google-open'].forEach(id=>on(id,'click',()=>$('help-dialog').showModal()));
   on('connect-google','click',async()=>{
     $('connect-google').disabled=true;$('google-feedback').textContent='Loading Google Maps…';
-    try{const key=$('google-key').value.trim()||config.google_maps_key||tabKey();await map.connectGoogle(key);tabKey(key);$('google-feedback').textContent='Google Maps connected.';$('map-status').innerHTML='<i style="background:#248156"></i> Google Maps · MBTA tracks';$('google-open').hidden=true;$('help-dialog').close();}
+    try{const key=$('google-key').value.trim()||config.google_maps_key||storedKey();await map.connectGoogle(key);if(!config.google_maps_key)storedKey(key,$('remember-key').checked);$('google-feedback').textContent='Google Maps connected.';$('map-status').innerHTML='<i style="background:#248156"></i> Google Maps · MBTA tracks';$('google-open').hidden=true;$('help-dialog').close();}
     catch(error){$('google-feedback').textContent=error.message;throw error;}finally{$('connect-google').disabled=false;$('google-key').value='';}
   });
+  on('forget-key','click',()=>{storedKey(null);$('google-feedback').textContent='Saved key removed from this browser. Reload to return to the track preview.';});
   on('coverage-open','click',()=>{renderCoverage();$('coverage-dialog').showModal();});
   on('coverage-list','click',e=>{const id=e.target.closest('[data-station]')?.dataset.station;if(id){$('coverage-dialog').close();pickStation(id);}});
   on('save','click',()=>{const s=saved();s[scenario.id]=serializable();localStorage.setItem(SAVED,JSON.stringify(s));savedList();$('saved-scenarios').value=scenario.id;notify(`Saved “${scenario.name}” in this browser.`);});
@@ -243,7 +260,7 @@ async function boot(){
     download(await response.blob(),filename('kml'));notify('KML downloaded. In your Google My Maps project, choose Add layer → Import.');$('help-dialog').showModal();
   });
   resetEndpoints();render();await evaluate();
-  const key=config.google_maps_key||tabKey();
-  if(key){try{await map.connectGoogle(key);$('map-status').innerHTML='<i style="background:#248156"></i> Google Maps · MBTA tracks';$('google-open').hidden=true;}catch(error){tabKey(null);notify(error.message,'error');}}
+  const key=config.google_maps_key||storedKey();
+  if(key){try{await map.connectGoogle(key);$('map-status').innerHTML='<i style="background:#248156"></i> Google Maps · MBTA tracks';$('google-open').hidden=true;}catch(error){notify(error.message,'error');}}
 }
 boot().catch(error=>{notify('Could not start route studio: '+error.message,'error');$('map').textContent='Restart with: python3 -m frontend.map_editor.server';});

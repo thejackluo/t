@@ -15,8 +15,10 @@ export class RouteMap {
     this.host = host; this.data = network; this.callbacks = callbacks;
     this.colors = Object.fromEntries(network.routes.map(r => [r.id, r.color]));
     this.stations = Object.fromEntries(network.stations.map(s => [s.id, s]));
-    this.state = {legs: [], preview: [], covered: new Set(), from: '', to: '', edit: -1};
+    this.state = {legs: [], preview: [], covered: new Set(), evaluated: [], from: '', to: '', edit: -1};
     this.polylines = []; this.googleMap = null; this.googleLoading = false;
+    this.tip = document.createElement('div'); this.tip.className = 'map-tip'; this.tip.hidden = true;
+    host.parentElement.append(this.tip);
     this.showPreview();
     this.observer = new ResizeObserver(() => {if (!this.googleMap) this.drawSVG();});
     this.observer.observe(host);
@@ -46,6 +48,7 @@ export class RouteMap {
     this.svg.addEventListener('pointermove', e => this.pointerMove(e));
     this.svg.addEventListener('pointerup', e => this.pointerUp(e));
     this.svg.addEventListener('pointercancel', () => {this.gesture = null; this.drawSVG();});
+    this.svg.addEventListener('pointerleave', () => this.hideTip());
     this.svg.addEventListener('keydown', e => {
       const target = e.target.closest('[data-station]');
       if (target && (e.key === 'Enter' || e.key === ' ')) {e.preventDefault(); this.callbacks.pick(target.dataset.station);}
@@ -65,16 +68,42 @@ export class RouteMap {
 
   pointerDown(e) {
     if (e.button !== 0) return;
-    const station = e.target.closest('[data-station]')?.dataset.station;
+    const point = this.svgPoint(e);
+    let station = e.target.closest('[data-station]')?.dataset.station;
+    // Pressing on a track grabs the nearest station on it, so a connection can be dragged along the line.
+    if (!station && e.target.closest('[data-track]') && this.state.edit < 0) station = this.nearest(point, 40) || undefined;
     const waypoint = e.target.closest('[data-waypoint]')?.dataset.waypoint;
-    this.gesture = {station, waypoint: waypoint === undefined ? null : Number(waypoint),
-      client: [e.clientX, e.clientY], point: this.svgPoint(e), view: [...this.view], moved: false};
+    this.gesture = {station, waypoint: waypoint === undefined ? null : Number(waypoint), target: null,
+      client: [e.clientX, e.clientY], point, view: [...this.view], moved: false};
+    this.hideTip();
     this.svg.setPointerCapture(e.pointerId);
+  }
+
+  showTip(html, x, y) {
+    const rect = this.host.getBoundingClientRect();
+    this.tip.innerHTML = html; this.tip.hidden = false;
+    this.tip.style.left = Math.min(x - rect.left + 14, rect.width - 270) + 'px';
+    this.tip.style.top = (y - rect.top + 14) + 'px';
+  }
+
+  hideTip() {this.tip.hidden = true;}
+
+  segmentTip(legIndex, segmentIndex) {
+    const leg = this.state.legs[legIndex], evaluated = this.state.evaluated[legIndex], f = this.callbacks.format;
+    const s = evaluated?.segments?.[segmentIndex];
+    if (!s) return '';
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const when = s.time_kind === 'estimated' ? 'typical ride time, estimated' : `scheduled · dep ${f.fmt(s.departure)} → arr ${f.fmt(s.arrival)}`;
+    return `<strong>${esc(f.name(s.from))} → ${esc(f.name(s.to))}</strong>${esc(leg.route)} · ${s.time_kind === 'estimated' ? '~' : ''}${f.duration(s.seconds)}<br><small>Segment ${legIndex + 1}.${segmentIndex + 1} · ${when}</small>`;
   }
 
   pointerMove(e) {
     const g = this.gesture;
-    if (!g) return;
+    if (!g) {
+      const hit = e.target.closest('[data-segment]');
+      if (hit) this.showTip(this.segmentTip(+hit.dataset.leg, +hit.dataset.segment), e.clientX, e.clientY); else this.hideTip();
+      return;
+    }
     if (Math.hypot(e.clientX - g.client[0], e.clientY - g.client[1]) > 5) g.moved = true;
     if (!g.moved) return;
     const p = this.svgPoint(e);
@@ -83,8 +112,11 @@ export class RouteMap {
         this.ghost = svgEl('line', {stroke: '#192f3c', 'stroke-width': 3, 'stroke-dasharray': '6 5', 'vector-effect': 'non-scaling-stroke', 'pointer-events': 'none'});
         this.svg.append(this.ghost);
       }
-      const a = xy(this.stations[g.station].point);
-      ['x1','y1','x2','y2'].forEach((k,i) => this.ghost.setAttribute(k, [...a,...p][i]));
+      // Snap to the station under the pointer and preview that connection live while dragging.
+      const target = this.nearest(p);
+      if (target !== g.target) {g.target = target; this.callbacks.hover?.(g.station, target);}
+      const a = xy(this.stations[g.station].point), b = target ? xy(this.stations[target].point) : p;
+      ['x1','y1','x2','y2'].forEach((k,i) => this.ghost.setAttribute(k, [...a,...b][i]));
     } else if (g.waypoint !== null) {
       const handle = this.svg.querySelector(`[data-waypoint="${g.waypoint}"]`);
       if (handle) {handle.setAttribute('cx', p[0]); handle.setAttribute('cy', p[1]);}
@@ -119,8 +151,8 @@ export class RouteMap {
     this.drawSVG();
   }
 
-  nearest(p) {
-    let found = null, best = 22 * this.pixelScale();
+  nearest(p, pixels = 22) {
+    let found = null, best = pixels * this.pixelScale();
     this.data.stations.forEach(s => {const q = xy(s.point), d = Math.hypot(q[0] - p[0], q[1] - p[1]); if(d < best){best = d; found = s.id;}});
     return found;
   }
@@ -174,12 +206,16 @@ export class RouteMap {
     this.svg.append(grid);
     const path=(geometry,attrs)=>svgEl('polyline',{points:geometry.map(xy).map(p=>p.join(',')).join(' '),fill:'none','stroke-linecap':'round','stroke-linejoin':'round','vector-effect':'non-scaling-stroke',...attrs});
     this.data.lines.forEach(l=>this.svg.append(path(l.geometry,{stroke:this.colors[l.route],'stroke-width':2.3,opacity:.3})));
+    // Wide invisible strokes make the tracks themselves grabbable for drag-along-the-line connections.
+    this.data.lines.forEach(l=>this.svg.append(path(l.geometry,{stroke:'#000',opacity:0,'stroke-width':16,'data-track':l.route,class:'track-hit'})));
     const layers=[...this.state.legs.map((l,i)=>({l,i,preview:false})),...this.state.preview.map(l=>({l,i:-1,preview:true}))];
     layers.forEach(({l,i,preview})=>{
       const foot=l.mode!=='ride';
       this.svg.append(path(l.geometry,{stroke:'#fff','stroke-width':preview?9:8,opacity:.95}));
       this.svg.append(path(l.geometry,{stroke:foot?'#7952c7':this.colors[l.route],'stroke-width':preview?5:4.5,
         'stroke-dasharray':foot?'6 5':'none',opacity:preview?1:.9}));
+      const segments=i>=0?this.state.evaluated[i]?.segments:null;
+      if(segments)segments.forEach((s,k)=>this.svg.append(path(s.geometry,{stroke:'#000',opacity:0,'stroke-width':14,'data-segment':k,'data-leg':i,class:'segment-hit'})));
       if(i>=0){const p=xy(l.geometry[Math.floor(l.geometry.length/2)]);this.svg.append(svgEl('circle',{cx:p[0],cy:p[1],r:9*scale,fill:'#193342',stroke:'white','stroke-width':1.5,'vector-effect':'non-scaling-stroke'}));this.svg.append(svgEl('text',{x:p[0],y:p[1]+3.3*scale,'text-anchor':'middle','font-size':10*scale,fill:'white','font-weight':700,'pointer-events':'none'},String(i+1)));}
     });
     this.data.stations.forEach(s=>{
@@ -207,7 +243,7 @@ export class RouteMap {
         window.initTRunMap=resolve;
         window.gm_authFailure=()=>{this.overlay?.setMap(null);this.polylines.forEach(p=>p.setMap(null));this.showPreview();this.callbacks.googleError('Google rejected this browser key or its configuration. Check Maps JavaScript API, billing, and localhost referrer restrictions.');reject(Error('Google Maps authentication failed.'));};
         const script=document.createElement('script');
-        script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key,callback:'initTRunMap',loading:'async',v:'weekly'});
+        script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key,callback:'initTRunMap',loading:'async',v:'weekly',libraries:'geometry'});
         script.onerror=()=>reject(Error('Could not reach Google Maps.'));
         document.head.append(script);
       });
@@ -245,17 +281,52 @@ export class RouteMap {
       }
       this.overlay=new Stations();this.overlay.setMap(this.googleMap);
       this.googleMap.addListener('click',e=>{if(this.state.edit>=0)this.addWaypoint([e.latLng.lat(),e.latLng.lng()]);});
+      // Track drag: press on a line, sweep along it, release on a station; the connection previews live.
+      this.googleMap.addListener('mousemove',e=>{
+        const d=this.gdrag;if(!d)return;
+        const target=this.nearestGoogle(e.domEvent);
+        if(target!==d.target){d.target=target;this.callbacks.hover?.(d.station,target);}
+        const end=target?latLng(this.stations[target].point):e.latLng;
+        if(!d.ghost)d.ghost=new google.maps.Polyline({map:this.googleMap,strokeColor:'#192f3c',strokeOpacity:0,zIndex:6,clickable:false,icons:[{icon:{path:'M 0,-1 0,1',strokeOpacity:1,scale:3},offset:'0',repeat:'12px'}]});
+        d.ghost.setPath([latLng(this.stations[d.station].point),end]);
+      });
+      document.addEventListener('pointerup',e=>{
+        const d=this.gdrag;if(!d)return;this.gdrag=null;d.ghost?.setMap(null);this.googleMap.setOptions({draggable:true});
+        const target=this.nearestGoogle(e);
+        if(target&&target!==d.station)this.callbacks.drag(d.station,target);
+      });
       this.drawGoogle();this.fit();
     }finally{this.googleLoading=false;}
+  }
+
+  nearestGoogle(domEvent){
+    const projection=this.overlay?.getProjection();if(!projection||!domEvent)return null;
+    const rect=this.host.getBoundingClientRect(),x=domEvent.clientX-rect.left,y=domEvent.clientY-rect.top;
+    let target=null,best=25;
+    this.data.stations.forEach(t=>{const p=projection.fromLatLngToContainerPixel(new google.maps.LatLng(...t.point));const d=Math.hypot(p.x-x,p.y-y);if(d<best){best=d;target=t.id;}});
+    return target;
   }
 
   drawGoogle(){
     this.polylines.forEach(p=>{google.maps.event.clearInstanceListeners(p);p.setMap(null);});this.polylines=[];
     const add=(geometry,options)=>{const p=new google.maps.Polyline({map:this.googleMap,path:geometry.map(latLng),geodesic:false,clickable:false,...options});this.polylines.push(p);return p;};
     this.data.lines.forEach(l=>add(l.geometry,{strokeColor:this.colors[l.route],strokeOpacity:.28,strokeWeight:3,zIndex:1}));
+    this.data.lines.forEach(l=>{
+      const hit=add(l.geometry,{strokeColor:'#000',strokeOpacity:0.001,strokeWeight:16,zIndex:1,clickable:this.state.edit<0});
+      hit.addListener('mousedown',e=>{
+        const station=this.nearestGoogle(e.domEvent)||this.nearestOnLine(e.latLng);if(!station)return;
+        this.googleMap.setOptions({draggable:false});this.gdrag={station,target:null,ghost:null};
+      });
+    });
     const layers=[...this.state.legs.map((l,i)=>({l,i})),...this.state.preview.map(l=>({l,i:-1}))];
     layers.forEach(({l,i})=>{
       const foot=l.mode!=='ride',editable=foot&&i===this.state.edit;
+      const segments=i>=0?this.state.evaluated[i]?.segments:null;
+      if(segments)segments.forEach((s,k)=>{
+        const hit=add(s.geometry,{strokeColor:'#000',strokeOpacity:0.001,strokeWeight:14,zIndex:5,clickable:true});
+        hit.addListener('mousemove',e=>this.showTip(this.segmentTip(i,k),e.domEvent.clientX,e.domEvent.clientY));
+        hit.addListener('mouseout',()=>this.hideTip());
+      });
       add(l.geometry,{strokeColor:'white',strokeWeight:9,strokeOpacity:.9,zIndex:2});
       const poly=add(l.geometry,{strokeColor:foot?'#7952c7':this.colors[l.route],strokeWeight:5,strokeOpacity:1,zIndex:3,editable,clickable:editable,
         icons:foot?[{icon:{path:'M 0,-1 0,1',strokeOpacity:1,scale:3},offset:'0',repeat:'12px'}]:[{icon:{path:google.maps.SymbolPath.FORWARD_CLOSED_ARROW,scale:2},offset:'65%'}]});
@@ -272,6 +343,12 @@ export class RouteMap {
       }
     });
     this.overlay?.draw();
+  }
+
+  nearestOnLine(position){
+    let found=null,best=600;
+    this.data.stations.forEach(s=>{const d=google.maps.geometry?.spherical?.computeDistanceBetween?.(position,latLng(s.point));if(d!==undefined&&d<best){best=d;found=s.id;}});
+    return found;
   }
 
   async suggestFoot(index){
