@@ -118,6 +118,86 @@ class ItineraryTests(unittest.TestCase):
         self.assertEqual(outside['covered'], [])
         self.assertEqual(self.n.options('place-pktrm', 'place-asmnl', '2026-12-25')['options'], [])
 
+    def test_same_line_branch_changes_and_repeated_stations_are_searchable(self):
+        branch = self.n.options('place-asmnl', 'place-brntn', '2026-10-22')
+        self.assertTrue(branch['options'], branch['message'])
+        first = branch['options'][0]
+        self.assertEqual([l['route'] for l in first['legs']], ['Red', 'Red'])
+        self.assertEqual(first['legs'][0]['to'], 'place-jfk')
+        self.assertEqual(first['revisited_stations'], 0)
+        result = self.n.evaluate(self.scenario(first['legs']))
+        self.assertEqual(result['status'], 'ok')
+        self.assertGreater(result['legs'][1]['transfer_seconds'], 0)
+        # Riverside -> Heath Street must re-traverse trunk stations; repeated traversal is allowed and labelled.
+        trunk = self.n.options('place-river', 'place-hsmnl', '2026-10-22')
+        self.assertTrue(trunk['options'], trunk['message'])
+        self.assertEqual(trunk['options'][0]['legs'][-1]['route'], 'Green-E')
+        self.assertEqual(self.n.evaluate(self.scenario(trunk['options'][0]['legs']))['status'], 'ok')
+        # A rare pattern (early trips only) must not hide the regular service on the same platforms.
+        p = self.n.patterns[trunk['options'][0]['legs'][-1]['pattern']]
+        rare = min((pid for pid, _, _ in self.n.equivalents(p['id'], 0, 1)), key=lambda pid: sum(len(t) for (_, q), t in self.n.scheduled.items() if q == pid), default=None)
+        if rare:
+            swapped = self.n.evaluate(self.scenario([self.n.ride(rare, *self.n.equivalents(p['id'], 0, 1)[0][1:])]))
+            self.assertEqual(swapped['legs'][0]['status'], 'ok')
+        # A plain single ride is still preferred and pointless same-line loops are not offered.
+        direct = self.n.options('place-asmnl', 'place-matt', '2026-10-22')['options']
+        self.assertEqual([o['label'] for o in direct], ['Mattapan'])
+
+    def test_options_respect_the_platform_ready_time(self):
+        ended = self.n.options('place-pktrm', 'place-asmnl', '2026-10-22', 'Red', '25:30')
+        self.assertEqual(ended['options'], [])
+        self.assertIn('has ended for 2026-10-22', ended['message'])
+        self.assertTrue(self.n.options('place-pktrm', 'place-asmnl', '2026-10-22', 'Red', '08:00')['options'])
+
+    def test_unavailable_rides_explain_why_and_keep_downstream_estimates(self):
+        legs = [self.direct(), self.direct('place-asmnl', 'place-matt', 'Mattapan')]
+        late = self.n.evaluate(self.scenario(legs, time='25:30'))
+        self.assertEqual(late['status'], 'partial')
+        self.assertEqual(late['summary']['unavailable_legs'], [1, 2])
+        first, second = late['legs']
+        self.assertEqual(first['reason_code'], 'no_service_remaining')
+        self.assertEqual(first['last_departure'], 24 * 3600 + 46 * 60)
+        self.assertIn('24:46', first['message'])
+        self.assertEqual(first['time_kind'], 'estimated')
+        self.assertIsNone(first['trip_id'])
+        self.assertEqual(first['travel_seconds'], self.n.typical_seconds(first['pattern'], first['start'], first['end']))
+        self.assertEqual(second['status'], 'unavailable')
+        self.assertEqual(late['summary']['elapsed'], first['travel_seconds'] + second['travel_seconds'] + second['transfer_seconds'])
+        self.assertEqual(late['summary']['estimated_ride'], first['travel_seconds'] + second['travel_seconds'])
+        self.assertEqual(late['covered'], [])  # Estimates never earn planned rail coverage.
+        outside = self.n.evaluate(self.scenario(legs, date='2026-12-25'))
+        self.assertEqual(outside['legs'][0]['reason_code'], 'outside_feed')
+        blocked = defaultdict(list, {(legs[0]['to_stop'], legs[1]['from_stop']): [
+            {'from_trip_id': '', 'to_trip_id': '', 'transfer_type': '3', 'min_transfer_time': '', 'min_walk_time': '', 'suggested_buffer_time': ''}]})
+        with patch.object(self.n, 'transfer_rules', blocked):
+            result = self.n.evaluate(self.scenario(legs))
+        self.assertEqual(result['legs'][1]['reason_code'], 'transfer_not_permitted')
+        self.assertIn(legs[1]['from_stop'], result['legs'][1]['message'])
+
+    def test_segments_carry_scheduled_or_estimated_times_per_station_pair(self):
+        ride = self.direct('place-alfcl', 'place-pktrm')
+        evaluated = self.n.evaluate(self.scenario([ride]))['legs'][0]
+        segments = evaluated['segments']
+        self.assertEqual(len(segments), len(ride['stations']) - 1)
+        self.assertEqual([s['from'] for s in segments] + [segments[-1]['to']], ride['stations'])
+        self.assertEqual(sum(s['seconds'] + s['dwell_seconds'] for s in segments), evaluated['travel_seconds'])
+        self.assertTrue(all(s['time_kind'] == 'scheduled_estimate' and len(s['geometry']) >= 2 for s in segments))
+        self.assertEqual(segments[0]['geometry'][0], ride['geometry'][0])
+        self.assertEqual(segments[-1]['geometry'][-1], ride['geometry'][-1])
+        typical = self.n.segments(ride['pattern'], ride['start'], ride['end'])
+        self.assertTrue(all(s['time_kind'] == 'estimated' and s['seconds'] >= 60 for s in typical))
+
+    def test_stations_without_gtfs_pathways_get_an_explicit_estimated_platform_change(self):
+        inbound, outbound = sorted(s for s, r in self.n.stops.items() if r.get('parent_station') == 'place-clmnl' and r['location_type'] == '0')
+        self.assertNotIn('place-clmnl', self.n.pathway_stations)
+        change = self.n.transfer(inbound, outbound, 30, station_change=90)
+        self.assertTrue(change['fallback'] and change['estimated'])
+        self.assertEqual(change['seconds'], 120)
+        # Park Street has GTFS pathways, so an unconnected platform pair there stays unavailable.
+        self.assertIn('place-pktrm', self.n.pathway_stations)
+        with patch.object(self.n, 'transfer_rules', defaultdict(list)), patch.object(self.n, 'pathway_time', return_value=None):
+            self.assertIsNone(self.n.transfer('70196', '70075'))
+
     def test_invalid_geometry_modes_and_assumptions_are_rejected(self):
         for legs in ([None], [{'mode': 'drive'}], [{**self.foot('place-pktrm', 'place-dwnxg'), 'geometry': [[float('nan'),0],[0,0]]}]):
             with self.assertRaises(ValueError):
