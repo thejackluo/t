@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -26,10 +28,70 @@ REASONS = {200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found',
            405: 'Method Not Allowed', 413: 'Payload Too Large', 500: 'Internal Server Error'}
 
 
+ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes'
+
+
 class ApiError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
+
+
+def decode_polyline(encoded):
+    """Google encoded polyline → [[lat, lng], ...]."""
+    points, index, lat, lng = [], 0, 0, 0
+    while index < len(encoded):
+        for which in (0, 1):
+            result, shift = 0, 0
+            while True:
+                b = ord(encoded[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            delta = ~(result >> 1) if result & 1 else result >> 1
+            if which == 0:
+                lat += delta
+            else:
+                lng += delta
+        points.append([round(lat / 1e5, 6), round(lng / 1e5, 6)])
+    return points
+
+
+def foot_route(network, origin, destination, fetch=None):
+    """Server-side pedestrian route from the Routes API; needs a server key, never the browser key."""
+    key = os.environ.get('GOOGLE_ROUTES_API_KEY', '')
+    if not key:
+        raise ApiError(404, 'Street routing is not configured on this server. Connect Google Maps in the browser or draw the path.')
+    if origin not in network.stations or destination not in network.stations or origin == destination:
+        raise ApiError(400, 'Choose two different MBTA stations.')
+    a, b = network.stations[origin]['point'], network.stations[destination]['point']
+    body = json.dumps({'origin': {'location': {'latLng': {'latitude': a[0], 'longitude': a[1]}}},
+                       'destination': {'location': {'latLng': {'latitude': b[0], 'longitude': b[1]}}},
+                       'travelMode': 'WALK', 'polylineQuality': 'HIGH_QUALITY'}).encode()
+    request = urllib.request.Request(ROUTES_URL, data=body, headers={
+        'Content-Type': 'application/json', 'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline'})
+    try:
+        if fetch:
+            payload = fetch(request)
+        else:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = response.read()
+    except urllib.error.HTTPError as exc:
+        raise ApiError(502, f'Google Routes API rejected the request ({exc.code}). Check the server key, Routes API enablement, and billing.') from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise ApiError(502, 'Could not reach the Google Routes API.') from exc
+    routes = json.loads(payload).get('routes') or []
+    if not routes:
+        raise ApiError(404, 'No pedestrian route returned. Check entrances or draw a path manually.')
+    route = routes[0]
+    points = decode_polyline(route['polyline']['encodedPolyline'])
+    points[0], points[-1] = a, b  # Station anchors stay fixed.
+    return {'from': origin, 'to': destination, 'geometry': points, 'geometry_source': 'google_routes',
+            'provider_distance': int(route.get('distanceMeters', 0)), 'provider_seconds': int(str(route.get('duration', '0s')).rstrip('s') or 0),
+            'note': 'Google pedestrian route; session-only, inspect entrances and crossings.'}
 
 
 def same_origin(origin, host):
@@ -90,7 +152,10 @@ def get_response(network, path, query):
     if path == '/api/network':
         return 200, JSON_MIME, network.metadata(), None
     if path == '/api/config':
-        return 200, JSON_MIME, {'google_maps_key': os.environ.get('GOOGLE_MAPS_API_KEY', ''), 'my_maps_url': MY_MAP}, None
+        return 200, JSON_MIME, {'google_maps_key': os.environ.get('GOOGLE_MAPS_API_KEY', ''), 'my_maps_url': MY_MAP,
+                                'foot_routing': bool(os.environ.get('GOOGLE_ROUTES_API_KEY'))}, None
+    if path == '/api/foot-route':
+        return 200, JSON_MIME, foot_route(network, query.get('from'), query.get('to')), None
     if path == '/api/options':
         return 200, JSON_MIME, network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', ''), query.get('time', '')), None
     if path == '/api/export/network.kml':

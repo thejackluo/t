@@ -8,11 +8,11 @@ const fmt = s => {if(s===undefined||s===null)return '—';const h=Math.floor(s/3
 const duration = s => {if(s===undefined||s===null)return '—';const m=Math.round(s/60);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
 let data, stations, colors, map, config, scenario, evaluation=null;
 let choices=[], choice=0, replaceIndex=-1, footIndex=-1, evalSerial=0, optionsSerial=0;
-let undo=[],redo=[],messageTimer;
+let undo=[],redo=[],messageTimer,lastAdded=[];
 const CURRENT='t-run-map-current-v1', SAVED='t-run-map-saved-v1';
 const emptyMarkup=$('itinerary-legs').innerHTML;
 function canonicalLeg(leg){
-  const keys=['id','mode','pattern','start','end','route','direction','headsign','shape_id','from','to','from_stop','to_stop','stations','geometry','geometry_source','distance'];
+  const keys=['id','mode','pattern','start','end','route','direction','headsign','shape_id','from','to','from_stop','to_stop','stations','geometry','geometry_source','distance','provider_seconds'];
   return Object.fromEntries(keys.filter(k=>k in leg).map(k=>[k,leg[k]]));
 }
 
@@ -101,11 +101,24 @@ function addPath(){
   const previous=replaceIndex>=0?scenario.legs[replaceIndex-1]:scenario.legs.at(-1);
   if(previous&&previous.to!==selected.legs[0].from)throw Error(`This journey must continue from ${name(previous.to)}. Change From, or replace an earlier segment.`);
   mutate(()=>{
-    const added=selected.legs.map(l=>({...clone(l),id:uid()}));
+    const added=selected.legs.map(l=>({...clone(l),id:uid()}));lastAdded=added.map(l=>l.id);
     if(replaceIndex>=0)scenario.legs.splice(replaceIndex,1,...added);else scenario.legs.push(...added);
   });
   const final=selected.legs.at(-1).to;replaceIndex=-1;footIndex=-1;setEndpoint('from',final);setEndpoint('to','');render();
-  notify('Connection added. Choose the next destination to extend your route.');
+  const addedFoot=selected.legs[0].mode!=='ride'?scenario.legs.findIndex(l=>l.id===lastAdded[0]):-1;
+  if(addedFoot>=0)suggestStreets(addedFoot).catch(error=>notify(`Connection added as a straight-line sketch: ${error.message}`));
+  else notify('Connection added. Choose the next destination to extend your route.');
+}
+async function suggestStreets(index){
+  const leg=scenario.legs[index];if(!leg||leg.mode==='ride')return;
+  if(config.foot_routing){
+    const route=await request('/api/foot-route?'+new URLSearchParams({from:leg.from,to:leg.to}));
+    if(scenario.legs[index]?.id!==leg.id)return;
+    mutate(()=>{Object.assign(scenario.legs[index],{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});});
+    notify(`Street route loaded: ${(route.provider_distance/1000).toFixed(2)} km, Google walking estimate ${duration(route.provider_seconds)}. Session-only; inspect entrances.`);
+  }else if(map.googleMap){
+    await map.suggestFoot(index);notify('Street suggestion loaded for this session. Check station entrances and pedestrian access.');
+  }else throw Error('street routing needs Google Maps connected in this browser or GOOGLE_ROUTES_API_KEY on the server. Use Edit foot path to draw it.');
 }
 function renderMap(){
   if(!map)return;
@@ -131,7 +144,7 @@ function render(){
     const ids=leg.stations||[];
     return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route||leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||'Rail ride')}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
       <div class="leg-timing"><span>${status==='unavailable'?`~${fmt(evaluated.start_time)} → ${fmt(evaluated.estimated_arrival)} (estimated)`:`${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}`}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
-      <p class="leg-detail">${foot?`${((item.distance||0)/1000).toFixed(2)} km · ${esc(leg.geometry_source.replaceAll('_',' '))} · ${duration(evaluated?.access_seconds)} entry/exit`:`${ids.length} station calls · ${duration(evaluated?.wait_seconds)} wait${evaluated?.continuous?' · stay on the same train':''}`}</p>
+      <p class="leg-detail">${foot?`${((item.distance||0)/1000).toFixed(2)} km · ${esc(leg.geometry_source.replaceAll('_',' '))} · ${duration(evaluated?.access_seconds)} entry/exit${item.provider_seconds?` · Google walking estimate ${duration(item.provider_seconds)}`:''}${leg.geometry_source==='straight_line_sketch'?' · straight-line estimate, not a street route':''}`:`${ids.length} station calls · ${duration(evaluated?.wait_seconds)} wait${evaluated?.continuous?' · stay on the same train':''}`}</p>
       ${!foot?`<details><summary>Intermediate stops & train identity</summary>${stopTimes||`<ol class="stop-list">${ids.map(s=>`<li>${esc(name(s))}</li>`).join('')}</ol>`}<p class="leg-detail">${esc(item.trip_id||'Not yet evaluated')}<br>${esc(leg.from_stop)} → ${esc(leg.to_stop)}<br>Shape ${esc(leg.shape_id)} · direction ${esc(leg.direction)}</p></details>`:''}
       <div class="leg-actions"><button data-action="replace">Replace</button><button data-action="up" aria-label="Move segment ${i+1} up" ${i===0?'disabled':''}>↑</button><button data-action="down" aria-label="Move segment ${i+1} down" ${i===scenario.legs.length-1?'disabled':''}>↓</button>${foot?'<button data-action="edit-foot">Edit foot path</button>':''}<button data-action="remove">Delete</button></div>
       ${foot&&footIndex===i?`<div class="foot-editor"><p>Click the map to add waypoints. Endpoints stay at stations. Coordinates are latitude,longitude, one per line.</p><textarea aria-label="Foot path coordinates">${esc(leg.geometry.map(p=>p.join(',')).join('\n'))}</textarea><div><button data-action="apply-foot">Apply coordinates</button> <button data-action="suggest-foot">Suggest streets ↗</button> <button data-action="reset-foot">Reset sketch</button> <button data-action="done-foot">Done</button></div><p>Google street suggestions are session-only. Inspect entrances and crossings.</p></div>`:''}
@@ -159,13 +172,13 @@ async function editAction(event){
       updateFoot(index,points);break;
     }
     case 'reset-foot':updateFoot(index,[stations[leg.from].point,stations[leg.to].point],'straight_line_sketch');break;
-    case 'suggest-foot':await map.suggestFoot(index);notify('Street suggestion loaded for this session. Check station entrances and pedestrian access.');break;
+    case 'suggest-foot':await suggestStreets(index);break;
   }
 }
 function updateFoot(index,geometry,source){
   if(!scenario.legs[index]||scenario.legs[index].mode==='ride')return;
   if(geometry.length<2||geometry.some(p=>p.length!==2||p.some(n=>!Number.isFinite(n))))throw Error('Each point needs valid latitude,longitude coordinates.');
-  mutate(()=>{scenario.legs[index].geometry=geometry;scenario.legs[index].geometry_source=source||(scenario.legs[index].geometry_source==='google_routes'?'google_routes':'user_drawn');});
+  mutate(()=>{const l=scenario.legs[index];l.geometry=geometry;l.geometry_source=source||(l.geometry_source==='google_routes'?'google_routes':'user_drawn');if(l.geometry_source!=='google_routes')delete l.provider_seconds;});
 }
 function modeChanged(){
   $('route-field').hidden=currentMode()!=='ride';$('find-routes').textContent=currentMode()==='ride'?'Preview rail paths →':'Preview foot connection →';invalidateOptions();renderMap();
