@@ -69,7 +69,7 @@ async function findPaths(){
   choices=[];$('add-path').hidden=true;$('find-routes').disabled=true;$('find-routes').textContent='Finding connected paths…';
   try{
     if(currentMode()==='ride'){
-      const result=await request('/api/options?'+new URLSearchParams({from,to,date:scenario.date,route:$('line-filter').value}));
+      const result=await request('/api/options?'+new URLSearchParams({from,to,date:scenario.date,route:$('line-filter').value,time:scenario.time}));
       if(serial!==optionsSerial)return;choices=result.options;
       if(!choices.length){$('path-options').innerHTML=`<p class="notice">${esc(result.message)}</p>`;renderMap();return;}
     }else{
@@ -84,7 +84,7 @@ function renderOptions(){
   $('path-options').innerHTML=choices.map((o,i)=>{
     const foot=o.legs[0].mode!=='ride';
     const intermediates=new Set(o.legs.flatMap(l=>l.stations));
-    return `<button class="path-option" data-choice="${i}" aria-pressed="${i===choice}"><strong>${esc(o.label)}</strong><span class="path-chips">${chips(o.legs)}</span><small>${foot?'Foot sketch · editable waypoints · inspect street access':`${intermediates.size} stations · ${o.transfers} transfer${o.transfers===1?'':'s'} · follows official rail shapes`}</small>${o.transfers?`<small>Change at ${o.legs.slice(0,-1).map(l=>esc(name(l.to))).join(', ')}</small>`:''}</button>`;
+    return `<button class="path-option" data-choice="${i}" aria-pressed="${i===choice}"><strong>${esc(o.label)}</strong><span class="path-chips">${chips(o.legs)}</span><small>${foot?'Foot sketch · editable waypoints · inspect street access':`${intermediates.size} stations · ${o.transfers} transfer${o.transfers===1?'':'s'}${o.revisited_stations?` · ${o.revisited_stations} repeated`:''}${o.estimated_transfers?' · estimated platform change':''} · follows official rail shapes`}</small>${o.transfers?`<small>Change at ${o.legs.slice(0,-1).map(l=>esc(name(l.to))).join(', ')}</small>`:''}</button>`;
   }).join('');
   $('add-path').hidden=!choices.length;$('add-path').textContent=replaceIndex>=0?'Replace this segment with selected path':'Add selected path to itinerary';
 }
@@ -113,14 +113,14 @@ function render(){
   $('mode-times').textContent=summary?`${duration(summary.ride)} / ${duration(summary.run+summary.walk)}`:'—';
   $('wait-times').textContent=summary?`${duration(summary.wait)} / ${duration(summary.transfer+summary.access)}`:'—';
   $('coverage-count').textContent=`${evaluation?.covered.length||0} / ${data.stations.length}`;
-  if(evaluation){$('timing-note').textContent=evaluation.status!=='ok'?evaluation.message+' Totals cover the feasible prefix only.':scenario.legs.length?`Finish ${fmt(summary.finish)} · first-train → last-platform proxy ${duration(summary.record_proxy_seconds)}. Plan duration includes pre-start preparation. Scheduled estimates, not live predictions.`:'Choose a date and platform-ready service time. Schedules are estimates, not live predictions.';}
+  if(evaluation){$('timing-note').textContent=evaluation.status!=='ok'?evaluation.message+(evaluation.summary.estimated?' Segments without a scheduled train use estimated typical ride times; totals are estimates.':''):scenario.legs.length?`Finish ${fmt(summary.finish)} · first-train → last-platform proxy ${duration(summary.record_proxy_seconds)}. Plan duration includes pre-start preparation. Scheduled estimates, not live predictions.`:'Choose a date and platform-ready service time. Schedules are estimates, not live predictions.';}
   $('itinerary-legs').innerHTML=scenario.legs.length?scenario.legs.map((leg,i)=>{
     const evaluated=evaluation?.legs[i],foot=leg.mode!=='ride',status=evaluated?.status||'pending';
     const item=evaluated||leg;
     const transfer=evaluated?.transfer_seconds?`<div class="transfer-note">↳ Internal transfer · ${duration(evaluated.transfer_seconds)} · directed platform ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)} (includes buffer)</div>`:'';
     const ids=leg.stations||[];
     return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route||leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||'Rail ride')}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
-      <div class="leg-timing"><span>${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
+      <div class="leg-timing"><span>${status==='unavailable'?`~${fmt(evaluated.start_time)} → ${fmt(evaluated.estimated_arrival)} (estimated)`:`${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}`}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
       <p class="leg-detail">${foot?`${((item.distance||0)/1000).toFixed(2)} km · ${esc(leg.geometry_source.replaceAll('_',' '))} · ${duration(evaluated?.access_seconds)} entry/exit`:`${ids.length} station calls · ${duration(evaluated?.wait_seconds)} wait${evaluated?.continuous?' · stay on the same train':''}`}</p>
       ${!foot?`<details><summary>Intermediate stops & train identity</summary><ol class="stop-list">${ids.map(s=>`<li>${esc(name(s))}</li>`).join('')}</ol><p class="leg-detail">${esc(item.trip_id||'Not yet evaluated')}<br>${esc(leg.from_stop)} → ${esc(leg.to_stop)}<br>Shape ${esc(leg.shape_id)} · direction ${esc(leg.direction)}</p></details>`:''}
       <div class="leg-actions"><button data-action="replace">Replace</button><button data-action="up" aria-label="Move segment ${i+1} up" ${i===0?'disabled':''}>↑</button><button data-action="down" aria-label="Move segment ${i+1} down" ${i===scenario.legs.length-1?'disabled':''}>↓</button>${foot?'<button data-action="edit-foot">Edit foot path</button>':''}<button data-action="remove">Delete</button></div>
