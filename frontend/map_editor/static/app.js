@@ -35,7 +35,7 @@ function storedKey(value,remember){
     return localStorage.getItem(KEY)||sessionStorage.getItem(KEY)||'';
   }catch{return '';}
 }
-const PREVIEW_LABEL={auto:'Preview fastest connection →',ride:'Preview rail paths →',run:'Preview running route →'};
+const PREVIEW_LABEL={auto:'Preview fastest connection →',ride:'Preview rail paths →',bus:'Preview direct buses →',run:'Preview running route →'};
 function currentMode(){return document.querySelector('[name=mode]:checked')?.value||'auto';}
 function previewLabel(){return PREVIEW_LABEL[currentMode()]||PREVIEW_LABEL.auto;}
 function assumptions(){return {run_pace:+$('run-pace').value,walk_pace:+$('walk-pace').value,buffer:+$('transfer-buffer').value,access:+$('access-time').value,station_change:+$('station-change').value};}
@@ -106,15 +106,17 @@ async function findPaths(quiet=false){
   const from=$('from-station').value,to=$('to-station').value;
   if(!from||!to||from===to)throw Error('Choose two different stations first.');
   const serial=++optionsSerial,mode=currentMode();
-  choices=[];$('add-path').hidden=true;$('find-routes').disabled=true;$('find-routes').textContent=mode==='auto'?'Comparing rail and running…':mode==='ride'?'Finding connected paths…':'Finding the running route…';
+  choices=[];$('add-path').hidden=true;$('find-routes').disabled=true;$('find-routes').textContent=mode==='auto'?'Comparing rail, bus and running…':mode==='ride'?'Finding connected paths…':mode==='bus'?'Finding direct buses…':'Finding the running route…';
   try{
-    const railRequest=()=>request('/api/options?'+new URLSearchParams({from,to,date:scenario.date,route:$('line-filter').value,time:scenario.time}));
-    const [rail,run]=await Promise.all([
-      mode==='run'?null:mode==='ride'?railRequest():railRequest().catch(error=>({options:[],message:error.message})),
-      mode==='ride'?null:runOption(from,to,quiet)]);
+    const optionsRequest=search=>request('/api/options?'+new URLSearchParams({from,to,date:scenario.date,route:search==='bus'?'':$('line-filter').value,time:scenario.time,mode:search}));
+    const soft=search=>optionsRequest(search).catch(error=>({options:[],message:error.message}));
+    const [rail,bus,run]=await Promise.all([
+      mode==='run'||mode==='bus'?null:mode==='ride'?optionsRequest('rail'):soft('rail'),
+      mode==='bus'?optionsRequest('bus'):mode==='auto'&&data.bus?.routes.length?soft('bus'):null,
+      mode==='ride'||mode==='bus'?null:runOption(from,to,quiet)]);
     if(serial!==optionsSerial)return;
-    const found=[...(rail?.options||[]).map(o=>({...o,kind:'ride'})),...(run?[run]:[])];
-    if(!found.length){$('path-options').innerHTML=`<p class="notice">${esc(rail?.message||'No connection found.')}</p>`;renderMap();return;}
+    const found=[...(rail?.options||[]).map(o=>({...o,kind:'ride'})),...(bus?.options||[]).map(o=>({...o,kind:'bus'})),...(run?[run]:[])];
+    if(!found.length){$('path-options').innerHTML=`<p class="notice">${esc(rail?.message||bus?.message||'No connection found.')}</p>`;renderMap();return;}
     await timeChoices(found);
     if(serial!==optionsSerial)return;
     if(mode==='auto')found.sort((a,b)=>(a.arrival??Infinity)-(b.arrival??Infinity));
@@ -167,10 +169,10 @@ function renderOptions(){
     const foot=o.legs[0].mode!=='ride';
     const intermediates=new Set(o.legs.flatMap(l=>l.stations));
     const fastest=currentMode()==='auto'&&i===0&&choices.length>1&&o.arrival!==undefined&&!o.blocked;
-    const kind=foot?'estimated run':o.estimated?'estimated rail':o.estimated_transfer?'scheduled rail, estimated transfer':'scheduled rail';
+    const kind=foot?'estimated run':o.kind==='bus'?(o.estimated?'estimated bus':'scheduled bus')+', estimated walk to the stop':o.estimated?'estimated rail':o.estimated_transfer?'scheduled rail, estimated transfer':'scheduled rail';
     const timing=o.blocked?'Does not connect from the current itinerary':o.arrival!==undefined?`Arrive ${fmt(o.arrival)} · ${o.minutes} min incl. waits${o.standalone?' (from service time, not chained)':''} · ${kind}`:o.timing_error?`Timing unavailable: ${esc(o.timing_error)}`:'';
     const footDetail=o.legs[0].geometry_source==='google_routes'?`${(o.provider_distance/1000).toFixed(2)} km Google street route · Google walking estimate ${duration(o.provider_seconds)} · session-only`:esc(o.note||'Straight-line sketch · editable waypoints');
-    return `<button class="path-option" data-choice="${i}" aria-pressed="${i===choice}"><strong>${esc(o.label)}${fastest?'<span class="leg-badge" data-kind="scheduled">fastest</span>':''}</strong><span class="path-chips">${chips(o.legs)}</span>${timing?`<small class="option-timing">${timing}</small>`:''}<small>${foot?footDetail:`${intermediates.size} stations · ${o.transfers} transfer${o.transfers===1?'':'s'}${o.revisited_stations?` · ${o.revisited_stations} repeated`:''}${o.street_transfers?' · exit & re-enter at street level (estimated)':o.estimated_transfers?' · estimated platform change':''} · follows official rail shapes`}</small>${o.transfers?`<small>Change at ${o.legs.slice(0,-1).map(l=>esc(name(l.to))).join(', ')}</small>`:''}</button>`;
+    return `<button class="path-option" data-choice="${i}" aria-pressed="${i===choice}"><strong>${esc(o.label)}${fastest?'<span class="leg-badge" data-kind="scheduled">fastest</span>':''}</strong><span class="path-chips">${chips(o.legs)}</span>${timing?`<small class="option-timing">${timing}</small>`:''}<small>${foot?footDetail:`${intermediates.size} stations · ${o.transfers} transfer${o.transfers===1?'':'s'}${o.revisited_stations?` · ${o.revisited_stations} repeated`:''}${o.street_transfers?' · exit & re-enter at street level (estimated)':o.estimated_transfers?' · estimated platform change':''}${o.kind==='bus'?' · direct scheduled MBTA bus · connector only, earns no station coverage':' · follows official rail shapes'}`}</small>${o.transfers?`<small>Change at ${o.legs.slice(0,-1).map(l=>esc(name(l.to))).join(', ')}</small>`:''}</button>`;
   }).join('');
   $('add-path').hidden=!choices.length;$('add-path').textContent=replaceIndex>=0?'Replace this segment with selected path':'Add selected path to itinerary';
 }
@@ -206,7 +208,7 @@ function render(){
   $('editing-banner').hidden=replaceIndex<0;$('editing-banner').textContent=replaceIndex<0?'':`Replacing segment ${replaceIndex+1}. Reset to return to appending.`;
   const summary=evaluation?.summary;
   $('total-time').textContent=summary?duration(summary.elapsed):'—';
-  $('mode-times').textContent=summary?`${summary.estimated_ride?'~':''}${duration(summary.ride+(summary.estimated_ride||0))} / ${duration(summary.run+summary.walk)}`:'—';
+  $('mode-times').textContent=summary?`${summary.estimated_ride?'~':''}${duration(summary.ride+(summary.estimated_ride||0)-(summary.bus||0))} / ${duration(summary.run+summary.walk)} / ${duration(summary.bus||0)}`:'—';
   $('wait-times').textContent=summary?`${duration(summary.wait)} / ${duration(summary.transfer+summary.access)}`:'—';
   $('coverage-count').textContent=`${evaluation?.covered.length||0} / ${data.rail_station_count}`;
   $('coverage-note').textContent=`Silver Line ${evaluation?.silver_covered?.length||0} / ${data.silver_station_count} · visit rule pending Guinness clarification`;
@@ -220,7 +222,7 @@ function render(){
     const transfer=street?`<div class="transfer-note">↳ Street-level transfer (estimated) · ${duration(evaluated.transfer_seconds)} · GTFS forbids the in-station change ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)}, so: exit ${esc(street.via_names?.[0]||street.via[0])}, about ${street.outdoor_meters} m outdoors, re-enter ${esc(street.via_names?.[1]||street.via[1])} (includes buffer)</div>`
       :evaluated?.transfer_seconds?`<div class="transfer-note">↳ Internal transfer · ${duration(evaluated.transfer_seconds)} · directed platform ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)} (includes buffer)</div>`:'';
     const ids=leg.stations||[];
-    return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route?routeName(leg.route):leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||(leg.kind==='silver'?'Silver Line ride':'Rail ride'))}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
+    return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route?routeName(leg.route):leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||(leg.kind==='bus'?'Bus ride':leg.kind==='silver'?'Silver Line ride':'Rail ride'))}${leg.kind==='bus'?' <small class="muted">bus connector · no coverage</small>':''}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
       <div class="leg-timing"><span>${status==='unavailable'?`~${fmt(evaluated.start_time)} → ${fmt(evaluated.estimated_arrival)} (estimated)`:`${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}`}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
       <p class="leg-detail">${foot?`${((item.distance||0)/1000).toFixed(2)} km · ${esc(leg.geometry_source.replaceAll('_',' '))} · ${duration(evaluated?.access_seconds)} entry/exit${item.provider_seconds?` · Google walking estimate ${duration(item.provider_seconds)}`:''}${leg.geometry_source==='straight_line_sketch'?' · straight-line estimate, not a street route':''}`:`${ids.length} station calls · ${duration(evaluated?.wait_seconds)} wait${evaluated?.continuous?' · stay on the same train':''}`}</p>
       ${!foot?`<details><summary>Intermediate stops & train identity</summary>${stopTimes||`<ol class="stop-list">${ids.map(s=>`<li>${esc(name(s))}</li>`).join('')}</ol>`}<p class="leg-detail">${esc(item.trip_id||'Not yet evaluated')}<br>${esc(leg.from_stop)} → ${esc(leg.to_stop)}<br>Shape ${esc(leg.shape_id)} · direction ${esc(leg.direction)}</p></details>`:''}
@@ -282,7 +284,7 @@ async function demo(){
 
 async function boot(){
   [data,config]=await Promise.all([request('/api/network'),request('/api/config')]);
-  stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));colors=Object.fromEntries(data.routes.map(r=>[r.id,r.color]));routeNames=Object.fromEntries(data.routes.map(r=>[r.id,r.name||r.id]));
+  stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));const allRoutes=[...data.routes,...(data.bus?.routes||[])];colors=Object.fromEntries(allRoutes.map(r=>[r.id,r.color]));routeNames=Object.fromEntries(allRoutes.map(r=>[r.id,r.name||r.id]));
   const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
   scenario={schema:1,id:uid(),name:'Boston rail rehearsal',dataset:data.manifest.sha256,ruleset:data.ruleset,
     date:data.dates.includes(today)?today:data.dates[0],time:'08:00',assumptions:assumptions(),legs:[]};
@@ -302,7 +304,7 @@ async function boot(){
   });
   $('station-options').innerHTML=stationList.map(s=>`<option value="${esc(s.name)}">${esc(s.routes.join('/'))}</option>`).join('');
   $('line-filter').insertAdjacentHTML('beforeend',data.routes.map(r=>`<option value="${esc(r.id)}">${esc(r.name||r.id)} only</option>`).join(''));
-  $('map-legend').innerHTML=[['Red',colors.Red],['Orange',colors.Orange],['Blue',colors.Blue],['Green',colors['Green-B']],['Mattapan',colors.Mattapan],['Silver',colors['741']],['Foot','#7952c7']].map(([r,c])=>`<span style="--route:${c}">${r}</span>`).join('');
+  $('map-legend').innerHTML=[['Red',colors.Red],['Orange',colors.Orange],['Blue',colors.Blue],['Green',colors['Green-B']],['Mattapan',colors.Mattapan],['Silver',colors['741']],['Bus','#FFC72C'],['Foot','#7952c7']].map(([r,c])=>`<span style="--route:${c}">${r}</span>`).join('');
   $('my-maps-link').href=config.my_maps_url;
   $('source-info').textContent=`Snapshot ${data.dates[0]}–${data.dates.at(-1)} · ${data.stations.length} rail stations · ${data.pattern_count} directed patterns · ${data.manifest.feed_info.feed_version}. All rail calls in this snapshot are scheduled non-timepoint estimates.`;
   syncInputs();savedList();
