@@ -425,9 +425,13 @@ class RailNetwork:
         source = leg.get('geometry_source', 'user_drawn')
         if source not in ('user_drawn', 'straight_line_sketch', 'google_routes'):
             raise ValueError('Unknown foot geometry source.')
-        return {'id': str(leg.get('id', ''))[:100], 'mode': leg['mode'], 'from': leg['from'], 'to': leg['to'],
-                'geometry': points, 'geometry_source': source,
-                'distance': round(sum(distance(a, b) for a, b in zip(points, points[1:]))), 'stations': []}
+        result = {'id': str(leg.get('id', ''))[:100], 'mode': leg['mode'], 'from': leg['from'], 'to': leg['to'],
+                  'geometry': points, 'geometry_source': source,
+                  'distance': round(sum(distance(a, b) for a, b in zip(points, points[1:]))), 'stations': []}
+        provider = leg.get('provider_seconds')
+        if source == 'google_routes' and isinstance(provider, (int, float)) and 0 < provider < 86400:
+            result['provider_seconds'] = int(provider)  # Google's own walking estimate, kept separate from our pace model.
+        return result
 
     def evaluate(self, scenario):
         if scenario.get('dataset', self.manifest['sha256']) != self.manifest['sha256']:
