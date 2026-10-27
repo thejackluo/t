@@ -16,9 +16,10 @@
       <label>Service date<input id="service-date" type="date"></label>
       <label>Platform ready<input id="start-time" value="08:00" inputmode="numeric" title="Service HH:MM; 24+ hours supported"></label>
     </div>
-    <div class="header-actions"><button id="save">Save</button><button id="export-kml" class="primary">Export to My Maps ↗</button><button id="help-open" aria-label="Help and Google Maps setup">?</button></div>
+    <div class="header-actions"><button id="save">Save</button><button id="share-link" title="Copy a view-only link to this itinerary">Share link</button><button id="export-kml" class="primary">Export to My Maps ↗</button><button id="help-open" aria-label="Help and Google Maps setup">?</button></div>
   </header>
   <div id="message" role="status" aria-live="polite" hidden></div>
+  <div id="viewer-banner" hidden>Shared itinerary · view only. Times are recomputed from the current schedule dataset. <button id="viewer-edit" class="text-button">Open an editable copy</button></div>
   <main class="workspace">
     <aside class="builder panel">
       <div class="section-heading"><span class="eyebrow">01 / BUILD A CONNECTION</span><button id="reset-endpoints" class="text-button">Reset</button></div>
@@ -50,6 +51,7 @@
       <div class="map-legend" id="map-legend"></div>
       <div class="coverage-strip"><div><span class="eyebrow">PLANNED RAIL COVERAGE</span><strong id="coverage-count">0 / 125</strong><small>Rail rehearsal · Silver Line required for full attempt</small></div><button id="coverage-open">View missing stations →</button></div>
     </section>
+    <dialog id="share-dialog"><button class="dialog-close" aria-label="Close" onclick="this.closest('dialog').close()">×</button><h2>View-only link</h2><p>Copy this link and send it; anyone opening it sees the itinerary and its times without being able to edit it.</p><input id="share-url" readonly style="width:100%;padding:8px;font-size:11px"></dialog>
     <aside class="itinerary panel">
       <div class="section-heading"><span class="eyebrow">02 / YOUR ITINERARY</span><div><button id="undo" title="Undo" disabled>↶</button><button id="redo" title="Redo" disabled>↷</button></div></div>
       <div class="totals"><div><span>Plan duration</span><strong id="total-time">—</strong></div><div><span>Train / foot</span><strong id="mode-times">—</strong></div><div><span>Wait / transfers & access</span><strong id="wait-times">—</strong></div></div>
