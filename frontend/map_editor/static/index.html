@@ -30,7 +30,7 @@
       <div class="connection-line"><span>↓</span><button id="swap" class="text-button">Swap endpoints ⇅</button></div>
       <label class="field">To station<input id="to-search" list="station-options" placeholder="Search a station…" autocomplete="off"><select id="to-station" aria-label="To station"></select></label>
       <datalist id="station-options"></datalist>
-      <label class="field" id="route-field">Rail preference<select id="line-filter"><option value="">All rail lines · transfers allowed</option></select></label>
+      <label class="field" id="route-field">Rail preference<select id="line-filter"><option value="">All rail + Silver lines · transfers allowed</option></select></label>
       <button id="find-routes" class="primary wide">Preview fastest connection →</button>
       <div id="editing-banner" class="notice" hidden></div>
       <div id="path-options" aria-live="polite"><p class="empty-copy">Your path options will appear here. Rail paths include every intermediate station.</p></div>
@@ -49,7 +49,7 @@
       <div id="map"><div class="map-loading">Loading official MBTA tracks…</div></div>
       <div class="map-caption"><strong id="map-instruction">Click a starting station</strong><span>Rail paths: official MBTA GTFS · station positions are fixed</span></div>
       <div class="map-legend" id="map-legend"></div>
-      <div class="coverage-strip"><div><span class="eyebrow">PLANNED RAIL COVERAGE</span><strong id="coverage-count">0 / 125</strong><small>Rail rehearsal · Silver Line required for full attempt</small></div><button id="coverage-open">View missing stations →</button></div>
+      <div class="coverage-strip"><div><span class="eyebrow">PLANNED RAIL COVERAGE</span><strong id="coverage-count">0 / 125</strong><small id="coverage-note">Silver Line visits tracked separately</small></div><button id="coverage-open">View missing stations →</button></div>
     </section>
     <dialog id="share-dialog"><button class="dialog-close" aria-label="Close" onclick="this.closest('dialog').close()">×</button><h2>View-only link</h2><p>Copy this link and send it; anyone opening it sees the itinerary and its times without being able to edit it.</p><input id="share-url" readonly style="width:100%;padding:8px;font-size:11px"></dialog>
     <aside class="itinerary panel">

@@ -48,7 +48,8 @@ class EditorServerTests(unittest.TestCase):
         self.assertIn('Google street route omitted', run.find('k:description', ns).text)
         self.assertNotIn(str(foot['geometry'][1][0]), ET.tostring(parsed, encoding='unicode'))
         reference = ET.fromstring(network_kml(self.n))
-        self.assertEqual(len(reference.findall('.//k:Point', ns)), 125)
+        self.assertEqual(len(reference.findall('.//k:Point', ns)), len(self.n.stations))
+        self.assertEqual(len(self.n.rail_stations), 125)
 
     def test_server_side_street_routes_need_a_key_and_keep_station_anchors(self):
         self.assertEqual(decode_polyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'), [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]])

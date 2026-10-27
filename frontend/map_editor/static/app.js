@@ -6,7 +6,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const uid = () => crypto.randomUUID();
 const fmt = s => {if(s===undefined||s===null)return '—';const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return `${String(h%24).padStart(2,'0')}:${String(m).padStart(2,'0')}${h>=24?' +'+Math.floor(h/24)+'d':''}`;};
 const duration = s => {if(s===undefined||s===null)return '—';const m=Math.round(s/60);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
-let data, stations, colors, map, config, scenario, evaluation=null;
+let data, stations, colors, routeNames={}, map, config, scenario, evaluation=null;
 let choices=[], choice=0, replaceIndex=-1, footIndex=-1, evalSerial=0, optionsSerial=0;
 let undo=[],redo=[],messageTimer,lastAdded=[],viewer=false;
 const CURRENT='t-run-map-current-v1', SAVED='t-run-map-saved-v1';
@@ -160,7 +160,8 @@ async function timeChoices(found){
     }catch(error){option.timing_error=error.message;}
   }));
 }
-function chips(legs){return legs.map(l=>`<span class="chip" style="--route:${colors[l.route]||'#7952c7'}">${esc(l.route||l.mode.toUpperCase())}</span>`).join('<span aria-hidden="true">›</span>');}
+function routeName(id){return routeNames[id]||id;}
+function chips(legs){return legs.map(l=>`<span class="chip" style="--route:${colors[l.route]||'#7952c7'}">${esc(l.route?routeName(l.route):l.mode.toUpperCase())}</span>`).join('<span aria-hidden="true">›</span>');}
 function renderOptions(){
   $('path-options').innerHTML=choices.map((o,i)=>{
     const foot=o.legs[0].mode!=='ride';
@@ -207,7 +208,8 @@ function render(){
   $('total-time').textContent=summary?duration(summary.elapsed):'—';
   $('mode-times').textContent=summary?`${summary.estimated_ride?'~':''}${duration(summary.ride+(summary.estimated_ride||0))} / ${duration(summary.run+summary.walk)}`:'—';
   $('wait-times').textContent=summary?`${duration(summary.wait)} / ${duration(summary.transfer+summary.access)}`:'—';
-  $('coverage-count').textContent=`${evaluation?.covered.length||0} / ${data.stations.length}`;
+  $('coverage-count').textContent=`${evaluation?.covered.length||0} / ${data.rail_station_count}`;
+  $('coverage-note').textContent=`Silver Line ${evaluation?.silver_covered?.length||0} / ${data.silver_station_count} · visit rule pending Guinness clarification`;
   if(evaluation){$('timing-note').textContent=evaluation.status!=='ok'?evaluation.message+(evaluation.summary.estimated?' Segments without a scheduled train use estimated typical ride times; totals are estimates.':''):scenario.legs.length?`Finish ${fmt(summary.finish)} · first-train → last-platform proxy ${duration(summary.record_proxy_seconds)}. Plan duration includes pre-start preparation. Scheduled estimates, not live predictions.`:'Choose a date and platform-ready service time. Schedules are estimates, not live predictions.';}
   $('itinerary-legs').innerHTML=scenario.legs.length?scenario.legs.map((leg,i)=>{
     const evaluated=evaluation?.legs[i],foot=leg.mode!=='ride',status=evaluated?.status||'pending';
@@ -218,7 +220,7 @@ function render(){
     const transfer=street?`<div class="transfer-note">↳ Street-level transfer (estimated) · ${duration(evaluated.transfer_seconds)} · GTFS forbids the in-station change ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)}, so: exit ${esc(street.via_names?.[0]||street.via[0])}, about ${street.outdoor_meters} m outdoors, re-enter ${esc(street.via_names?.[1]||street.via[1])} (includes buffer)</div>`
       :evaluated?.transfer_seconds?`<div class="transfer-note">↳ Internal transfer · ${duration(evaluated.transfer_seconds)} · directed platform ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)} (includes buffer)</div>`:'';
     const ids=leg.stations||[];
-    return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route||leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||'Rail ride')}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
+    return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route?routeName(leg.route):leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||(leg.kind==='silver'?'Silver Line ride':'Rail ride'))}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
       <div class="leg-timing"><span>${status==='unavailable'?`~${fmt(evaluated.start_time)} → ${fmt(evaluated.estimated_arrival)} (estimated)`:`${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}`}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
       <p class="leg-detail">${foot?`${((item.distance||0)/1000).toFixed(2)} km · ${esc(leg.geometry_source.replaceAll('_',' '))} · ${duration(evaluated?.access_seconds)} entry/exit${item.provider_seconds?` · Google walking estimate ${duration(item.provider_seconds)}`:''}${leg.geometry_source==='straight_line_sketch'?' · straight-line estimate, not a street route':''}`:`${ids.length} station calls · ${duration(evaluated?.wait_seconds)} wait${evaluated?.continuous?' · stay on the same train':''}`}</p>
       ${!foot?`<details><summary>Intermediate stops & train identity</summary>${stopTimes||`<ol class="stop-list">${ids.map(s=>`<li>${esc(name(s))}</li>`).join('')}</ol>`}<p class="leg-detail">${esc(item.trip_id||'Not yet evaluated')}<br>${esc(leg.from_stop)} → ${esc(leg.to_stop)}<br>Shape ${esc(leg.shape_id)} · direction ${esc(leg.direction)}</p></details>`:''}
@@ -230,8 +232,8 @@ function render(){
   if($('coverage-dialog').open)renderCoverage();
 }
 function renderCoverage(){
-  const covered=new Set(evaluation?.covered||[]);
-  $('coverage-list').innerHTML=[...data.stations].sort((a,b)=>Number(covered.has(a.id))-Number(covered.has(b.id))||a.name.localeCompare(b.name)).map(s=>`<button class="coverage-station" data-station="${esc(s.id)}" data-covered="${covered.has(s.id)}">${covered.has(s.id)?'✓':'○'} ${esc(s.name)} <small>${esc(s.routes.join(' / '))}</small></button>`).join('');
+  const covered=new Set([...(evaluation?.covered||[]),...(evaluation?.silver_covered||[])]);
+  $('coverage-list').innerHTML=[...data.stations].sort((a,b)=>Number(a.kind==='silver')-Number(b.kind==='silver')||Number(covered.has(a.id))-Number(covered.has(b.id))||a.name.localeCompare(b.name)).map(s=>`<button class="coverage-station" data-station="${esc(s.id)}" data-covered="${covered.has(s.id)}">${covered.has(s.id)?'✓':'○'} ${esc(s.name)} <small>${esc(s.routes.map(routeName).join(' / '))}${s.kind==='silver'?' · Silver Line':''}</small></button>`).join('');
 }
 async function editAction(event){
   const button=event.target.closest('[data-action]');if(!button)return;
@@ -280,7 +282,7 @@ async function demo(){
 
 async function boot(){
   [data,config]=await Promise.all([request('/api/network'),request('/api/config')]);
-  stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));colors=Object.fromEntries(data.routes.map(r=>[r.id,r.color]));
+  stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));colors=Object.fromEntries(data.routes.map(r=>[r.id,r.color]));routeNames=Object.fromEntries(data.routes.map(r=>[r.id,r.name||r.id]));
   const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
   scenario={schema:1,id:uid(),name:'Boston rail rehearsal',dataset:data.manifest.sha256,ruleset:data.ruleset,
     date:data.dates.includes(today)?today:data.dates[0],time:'08:00',assumptions:assumptions(),legs:[]};
@@ -299,8 +301,8 @@ async function boot(){
     on(side+'-search','change',()=>{const text=$(side+'-search').value.toLowerCase().trim();const s=stationList.find(s=>s.name.toLowerCase()===text||s.id===text);if(s)setEndpoint(side,s.id);else if(!text)setEndpoint(side,'');});
   });
   $('station-options').innerHTML=stationList.map(s=>`<option value="${esc(s.name)}">${esc(s.routes.join('/'))}</option>`).join('');
-  $('line-filter').insertAdjacentHTML('beforeend',data.routes.map(r=>`<option value="${esc(r.id)}">${esc(r.id)} only</option>`).join(''));
-  $('map-legend').innerHTML=[['Red',colors.Red],['Orange',colors.Orange],['Blue',colors.Blue],['Green',colors['Green-B']],['Mattapan',colors.Mattapan],['Foot','#7952c7']].map(([r,c])=>`<span style="--route:${c}">${r}</span>`).join('');
+  $('line-filter').insertAdjacentHTML('beforeend',data.routes.map(r=>`<option value="${esc(r.id)}">${esc(r.name||r.id)} only</option>`).join(''));
+  $('map-legend').innerHTML=[['Red',colors.Red],['Orange',colors.Orange],['Blue',colors.Blue],['Green',colors['Green-B']],['Mattapan',colors.Mattapan],['Silver',colors['741']],['Foot','#7952c7']].map(([r,c])=>`<span style="--route:${c}">${r}</span>`).join('');
   $('my-maps-link').href=config.my_maps_url;
   $('source-info').textContent=`Snapshot ${data.dates[0]}–${data.dates.at(-1)} · ${data.stations.length} rail stations · ${data.pattern_count} directed patterns · ${data.manifest.feed_info.feed_version}. All rail calls in this snapshot are scheduled non-timepoint estimates.`;
   syncInputs();savedList();
@@ -309,7 +311,7 @@ async function boot(){
   const preview=(a,b,quiet)=>{setEndpoint('from',a);setEndpoint('to',b);findPaths(quiet).catch(e=>notify(e.message,'error'));};
   map=new RouteMap($('map'),data,{pick:pickStation,drag:(a,b)=>{clearTimeout(hoverTimer);if(!viewer)preview(a,b,false);},foot:updateFoot,
     hover:(a,b)=>{clearTimeout(hoverTimer);if(viewer||!b||a===b)return;hoverTimer=setTimeout(()=>preview(a,b,true),180);},
-    format:{name,fmt,duration},
+    format:{name,fmt,duration,routeName},
     googleError:message=>{storedKey(null);$('map-status').innerHTML='<i></i> Geographic track preview';$('google-open').hidden=false;notify(message,'error');}});
   $('origin-hint').textContent=location.origin+'/*';
   on('find-routes','click',()=>findPaths());on('add-path','click',addPath);on('reset-endpoints','click',resetEndpoints);

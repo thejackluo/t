@@ -13,8 +13,15 @@ from itertools import count
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+SILVER = {'741': 'SL1', '742': 'SL2', '743': 'SL3', '746': 'SLW', '749': 'SL5', '751': 'SL4'}
 COLORS = {'Red': '#DA291C', 'Orange': '#ED8B00', 'Blue': '#003DA5', 'Mattapan': '#9b342c',
-          **{f'Green-{b}': '#00843D' for b in 'BCDE'}}
+          **{f'Green-{b}': '#00843D' for b in 'BCDE'}, **{r: '#7C878E' for r in SILVER}}
+COVERAGE_LABEL = ('Rail rehearsal plus Silver Line rides; Silver visits are tracked separately because the Guinness '
+                  'visit rule for Silver and the approved station inventory still need clarification')
+
+
+def route_name(route):
+    return SILVER.get(route, route)
 
 
 def distance(a, b):
@@ -53,9 +60,12 @@ class RailNetwork:
         if digest != self.manifest['sha256']:
             raise ValueError('GTFS archive does not match the schedule manifest.')
         self.stations = {r['Station ID']: {'id': r['Station ID'], 'name': r['Station name'],
-                         'routes': r['Rail routes'].split(', '),
+                         'routes': r['Rail routes'].split(', '), 'kind': r.get('Kind') or 'rail',
                          'point': [float(r['Latitude']), float(r['Longitude'])]}
                          for r in self.rows('stations')}
+        # Grouped Silver street stops have no GTFS parent; the build exports which stop IDs each station groups.
+        self.station_of = {stop: r['Station ID'] for r in self.rows('stations') for stop in (r.get('Stop IDs') or '').split()}
+        self.rail_stations = {s for s, r in self.stations.items() if r['kind'] == 'rail'}
         self.calendar = {(r['Service date'], r['Route']): r for r in self.rows('service_calendar')}
         trips = defaultdict(list)
         for r in self.rows('departures'):
@@ -134,7 +144,7 @@ class RailNetwork:
 
     def parent(self, stop):
         r = self.stops.get(stop, {})
-        return r.get('parent_station') or stop
+        return self.station_of.get(stop) or r.get('parent_station') or stop
 
     def stop_point(self, stop):
         r = self.stops[stop]
@@ -237,7 +247,7 @@ class RailNetwork:
             raise ValueError('Boarding or alighting is not allowed at this endpoint.')
         geometry = self.geometry(p, start, end)
         return {'mode': 'ride', 'pattern': pid, 'start': start, 'end': end, 'route': p['route'],
-                'direction': p['direction'], 'headsign': p['headsign'], 'shape_id': p['shape_id'],
+                'route_name': route_name(p['route']), 'kind': 'silver' if p['route'] in SILVER else 'rail', 'direction': p['direction'], 'headsign': p['headsign'], 'shape_id': p['shape_id'],
                 'from': calls[0]['station'], 'to': calls[-1]['station'], 'from_stop': calls[0]['stop'],
                 'to_stop': calls[-1]['stop'], 'stations': [c['station'] for c in calls], 'geometry': geometry,
                 'geometry_source': 'MBTA GTFS shapes.txt', 'distance': round(sum(distance(x, y) for x, y in zip(geometry, geometry[1:])))}
@@ -251,7 +261,9 @@ class RailNetwork:
             lines.append({'route': p['route'], 'shape_id': p['shape_id'],
                           'geometry': self.ride(p['id'], 0, len(p['calls']) - 1)['geometry']})
         return {'stations': list(self.stations.values()), 'lines': lines,
-                'routes': [{'id': r, 'color': COLORS[r]} for r in self.manifest['routes']],
+                'routes': [{'id': r, 'name': route_name(r), 'color': COLORS[r], 'kind': 'silver' if r in SILVER else 'rail'} for r in self.manifest['routes']],
+                'rail_station_count': len(self.rail_stations), 'silver_station_count': len(self.stations) - len(self.rail_stations),
+                'coverage_label': COVERAGE_LABEL,
                 'dates': sorted({d for d, _ in self.calendar}), 'manifest': self.manifest,
                 'ruleset': 'rail-rehearsal-v1', 'pattern_count': len(self.patterns)}
 
@@ -370,7 +382,7 @@ class RailNetwork:
                                     'revisited_stations': revisits,
                                     'estimated_transfers': any(l.get('transfer_estimated') for l in legs),
                                     'street_transfers': any(l.get('transfer_street_level') for l in legs),
-                                    'label': ' → '.join(x['route'] for x in legs)})
+                                    'label': ' → '.join(route_name(x['route']) for x in legs)})
                     signatures.add(signature)
                 continue
             if len(legs) >= 4:
@@ -614,18 +626,21 @@ class RailNetwork:
                     first_board = dep if first_board is None else first_board
                     last_arrival = arrival
                     ready = arrival
-                    covered.update(leg['stations'])
+                    covered.update(leg['stations'])  # Split into rail/Silver coverage below.
                     previous_ride = item
             result.append(item)
             previous = leg
         totals = {mode: sum(e['seconds'] for e in events if e['mode'] == mode)
                   for mode in ('ride', 'wait', 'transfer', 'access', 'run', 'walk', 'estimated_ride')}
         unavailable = [i + 1 for i, l in enumerate(result) if l['status'] == 'unavailable']
+        silver = covered - self.rail_stations
+        covered &= self.rail_stations
         return {'legs': result, 'events': events, 'covered': sorted(covered),
-                'missing': sorted(set(self.stations) - covered), 'status': 'partial' if problems else 'ok',
+                'missing': sorted(self.rail_stations - covered),
+                'silver_covered': sorted(silver), 'silver_missing': sorted(set(self.stations) - self.rail_stations - silver), 'status': 'partial' if problems else 'ok',
                 'message': problems[0] if problems else '', 'problems': problems,
                 'summary': {'elapsed': ready - start_time, 'first_board': first_board, 'finish': ready,
                             'unavailable_legs': unavailable, 'estimated': bool(unavailable),
                             'record_proxy_seconds': last_arrival - first_board if first_board is not None else None,
                             'foot_meters': sum(l.get('distance', 0) for l in result if l['mode'] != 'ride' and l['status'] == 'ok'), **totals},
-                'dataset': self.manifest['sha256'], 'ruleset': 'rail-rehearsal-v1', 'coverage_label': 'Rail rehearsal; Silver Line and approved inventory still required'}
+                'dataset': self.manifest['sha256'], 'ruleset': 'rail-rehearsal-v1', 'coverage_label': COVERAGE_LABEL}

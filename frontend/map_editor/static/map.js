@@ -94,7 +94,7 @@ export class RouteMap {
     if (!s) return '';
     const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const when = s.time_kind === 'estimated' ? 'typical ride time, estimated' : `scheduled · dep ${f.fmt(s.departure)} → arr ${f.fmt(s.arrival)}`;
-    return `<strong>${esc(f.name(s.from))} → ${esc(f.name(s.to))}</strong>${esc(leg.route)} · ${s.time_kind === 'estimated' ? '~' : ''}${f.duration(s.seconds)}<br><small>Segment ${legIndex + 1}.${segmentIndex + 1} · ${when}</small>`;
+    return `<strong>${esc(f.name(s.from))} → ${esc(f.name(s.to))}</strong>${esc(f.routeName?f.routeName(leg.route):leg.route)} · ${s.time_kind === 'estimated' ? '~' : ''}${f.duration(s.seconds)}<br><small>Segment ${legIndex + 1}.${segmentIndex + 1} · ${when}</small>`;
   }
 
   pointerMove(e) {

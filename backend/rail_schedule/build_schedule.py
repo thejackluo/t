@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build an auditable MBTA core-rail workbook from an official GTFS snapshot."""
 import argparse
+import re
 import csv
 import gzip
 import hashlib
@@ -28,6 +29,10 @@ else:
 FEED_URL = 'https://cdn.mbta.com/MBTA_GTFS.zip'
 API = 'https://api-v3.mbta.com'
 ROUTES = ('Red', 'Mattapan', 'Orange', 'Blue', 'Green-B', 'Green-C', 'Green-D', 'Green-E')
+# Silver Line bus rapid transit (GTFS route_type 3). The record definition includes it; its visit rule is still
+# awaiting Guinness clarification, so Silver stations are exported with their own kind and never counted as rail.
+SILVER = ('741', '742', '743', '746', '749', '751')
+ALL_ROUTES = ROUTES + SILVER
 TZ = ZoneInfo('America/New_York')
 DAYS = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')
 
@@ -78,11 +83,15 @@ class Feed:
         self.end = parse_date(self.info['feed_end_date'])
         self.dates = [self.start + timedelta(days=i) for i in range((self.end-self.start).days+1)]
         all_routes = {r['route_id']: r for r in self.rows('routes.txt')}
-        self.routes = {rid: r for rid, r in all_routes.items() if rid in ROUTES}
-        assert set(self.routes) == set(ROUTES), 'Missing requested rail routes'
+        self.routes = {rid: r for rid, r in all_routes.items() if rid in ALL_ROUTES}
+        assert set(self.routes) == set(ALL_ROUTES), 'Missing requested rail/Silver routes'
         self.stops = {r['stop_id']: r for r in self.rows('stops.txt')}
         all_trips = {r['trip_id']: r for r in self.rows('trips.txt')}
-        self.trips = {tid: r for tid, r in all_trips.items() if r['route_id'] in ROUTES and (r.get('trip_route_type') or all_routes[r['route_id']]['route_type']) in ('0', '1')}
+        def wanted(r):
+            mode = r.get('trip_route_type') or all_routes[r['route_id']]['route_type']
+            return (r['route_id'] in ROUTES and mode in ('0', '1')) or (r['route_id'] in SILVER and mode == '3')
+        self.trips = {tid: r for tid, r in all_trips.items() if wanted(r)}
+        self.station_stops, self.station_kind, self.station_names = defaultdict(set), {}, {}
         self.service_routes = defaultdict(set)
         for t in self.trips.values():
             self.service_routes[t['service_id']].add(t['route_id'])
@@ -107,7 +116,7 @@ class Feed:
                 self.skipped_blanks += 1
                 continue
             stop = self.stops[r['stop_id']]
-            station = stop.get('parent_station') or r['stop_id']
+            station = self.station_of(stop, trip['route_id'])
             self.station_routes[station].add(trip['route_id'])
             self.events[(trip['route_id'], trip['service_id'])].append({
                 'station': station, 'stop': r['stop_id'], 'trip': r['trip_id'],
@@ -136,7 +145,7 @@ class Feed:
         self.calendar = []
         for day in self.dates:
             active = self.active(day)
-            for route in ROUTES:
+            for route in ALL_ROUTES:
                 services = tuple(sorted(s for s in active if route in self.service_routes[s]))
                 key = (route, services)
                 if key not in self.profiles:
@@ -154,6 +163,23 @@ class Feed:
         for (route, services), pid in self.profiles.items():
             self.profile_events[pid] = sorted([e for s in services for e in self.events[(route, s)]],
                                              key=lambda e: (e['station'], e['direction'], e['departure'], e['trip'], e['sequence']))
+
+    def station_of(self, stop, route):
+        """Coverage entity for a stop call: the GTFS parent station, or for Silver street stops without one an explicit
+        grouping of the directional stops by normalised stop name (stop IDs are exported so the grouping is auditable)."""
+        station = stop.get('parent_station')
+        if not station and route in SILVER:
+            name = re.sub(r' - (Silver Line|Arrivals Level)$| Stop \d+', '', stop['stop_name']).replace(' opp ', ' @ ')
+            station = 'silver-' + re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+            self.station_names[station] = name
+        station = station or stop['stop_id']
+        self.station_stops[station].add(stop['stop_id'])
+        kind = 'silver' if route in SILVER else 'rail'
+        self.station_kind[station] = 'rail' if self.station_kind.get(station) == 'rail' else kind
+        return station
+
+    def station_name(self, station):
+        return self.station_names.get(station) or self.stops[station]['stop_name']
 
     def rows(self, name):
         with self.z.open(name) as raw:
@@ -226,7 +252,7 @@ def build(feed, out):
         archive.write_bytes(f.path.read_bytes())
     o = Output(out)
     note_rows = [
-        ['Scope', 'Red, Mattapan, Orange, Blue, Green B/C/D/E; rail only.'],
+        ['Scope', 'Red, Mattapan, Orange, Blue, Green B/C/D/E rail, plus Silver Line SL1/SL2/SL3/SL4/SL5/SLW (routes 741/742/743/751/749/746) exported with kind=silver. Other buses excluded.'],
         ['Coverage', f'{f.start} through {f.end}, inclusive. Dates outside this feed have no published times in this workbook.'],
         ['Data version', f.info['feed_version']], ['Generated UTC', generated],
         ['Source ZIP', FEED_URL], ['Snapshot SHA256', digest],
@@ -235,7 +261,7 @@ def build(feed, out):
         ['All trip times', 'Service calendar maps each date + route to a numeric profile. Departures contains every stop event for each profile, including arrival-only terminal calls.'],
         ['Wait lookup', 'Yellow cells accept date, route, station ID, direction, optional exact destination, and passenger platform-arrival service time. Excel 2019+/365 MINIFS support required.'],
         ['Time format', 'Service HH:MM:SS, not an Excel time-of-day. 25:10:00 is 1:10 AM after the service date. Preserve hours over 24.'],
-        ['Scheduled estimates', 'All rail times in this snapshot have timepoint=0 (estimated/non-timepoint). Scheduled seconds and gaps are not guaranteed operating times.'],
+        ['Scheduled estimates', 'All rail times in this snapshot have timepoint=0 (estimated/non-timepoint); Silver Line calls are timepoint=1 only at published bus timepoints. Scheduled seconds and gaps are not guaranteed operating times.'],
         ['First / last', 'Arrival columns describe stop calls; boarding columns only pickup_type=0. Terminal arrivals cannot be used as boarding departures. These are not station-door opening hours.'],
         ['Direction / destination', 'Direction IDs come from directions.txt. Destination hours preserves headsigns, including short turns. Combined route gaps can count trains that do not reach your destination.'],
         ['Gap definition', 'Gap is next scheduled boardable departure minus previous departure within the same profile/station/route/direction. Destination gap also matches headsign. No overnight gap is included.'],
@@ -272,7 +298,7 @@ def build(feed, out):
         summaries[pid] = {key: metrics(es) for key, es in groups.items()}
         for (station, direction, dest), es in sorted(destinations.items()):
             m = metrics(es)
-            dest_rows.append([pid, route, station, f.stops[station]['stop_name'], direction,
+            dest_rows.append([pid, route, station, f.station_name(station), direction,
                               f.directions.get((route, direction), direction), dest] + m[:8])
         dates = f.profile_dates[pid]
         profile_rows.append([pid, route, min(dates).isoformat(), max(dates).isoformat(), len(dates),
@@ -286,7 +312,7 @@ def build(feed, out):
             for station, direction in sorted(route_station_dirs[route]):
                 m = summaries[pid].get((station, direction))
                 status = 'No scheduled rail' if m is None else ('Arrival only / no boarding' if m[4] == 0 else 'Scheduled rail')
-                yield [day, weekday, holiday, route, station, f.stops[station]['stop_name'], direction,
+                yield [day, weekday, holiday, route, station, f.station_name(station), direction,
                        f.directions.get((route, direction), direction), pid, status] + (m or ['', '', '', '', 0, None, None, None, ''])
     o.table('Station hours', ['Service date', 'Day', 'Holiday name', 'Route', 'Station ID', 'Station name', 'Direction ID', 'Direction', 'Profile ID', 'Status'] + metric_headers + ['Boarding destinations'], daily_rows())
     o.table('Destination hours', ['Profile ID', 'Route', 'Station ID', 'Station name', 'Direction ID', 'Direction', 'Destination'] + metric_headers, dest_rows)
@@ -302,7 +328,7 @@ def build(feed, out):
                 dest_gap = (e['departure'] - previous_dest[kd]) if e['pickup'] == '0' and kd in previous_dest else None
                 if e['pickup'] == '0':
                     previous[k] = previous_dest[kd] = e['departure']
-                yield [pid, route, e['station'], f.stops[e['station']]['stop_name'], e['direction'],
+                yield [pid, route, e['station'], f.station_name(e['station']), e['direction'],
                        e['destination'], clock(e['arrival']), clock(e['departure']), e['departure'],
                        int(e['pickup'] == '0'), int(e['dropoff'] == '0'), gap, dest_gap,
                        e['timepoint'], e['stop'], e['trip'], e['sequence'], e['service']]
@@ -310,8 +336,17 @@ def build(feed, out):
                            'Arrival service time', 'Departure service time', 'Departure service seconds', 'Can board',
                            'Can alight', 'Gap route seconds', 'Gap destination seconds', 'Timepoint', 'Platform stop ID',
                            'Trip ID', 'Stop sequence', 'Service ID'], departure_rows())
-    o.table('Stations', ['Station ID', 'Station name', 'Rail routes', 'Latitude', 'Longitude', 'Wheelchair boarding code'],
-            ([s, f.stops[s]['stop_name'], ', '.join(sorted(routes)), f.stops[s]['stop_lat'], f.stops[s]['stop_lon'], f.stops[s]['wheelchair_boarding']] for s, routes in sorted(f.station_routes.items())))
+    def station_row(s, routes):
+        if s in f.stops:
+            r = f.stops[s]
+            name, lat, lon, chair = r['stop_name'], r['stop_lat'], r['stop_lon'], r['wheelchair_boarding']
+        else:  # Grouped Silver street stops: centroid of the directional stops, no single wheelchair code.
+            pts = [(float(f.stops[x]['stop_lat']), float(f.stops[x]['stop_lon'])) for x in f.station_stops[s]]
+            name, chair = f.station_names[s], ''
+            lat, lon = round(sum(p[0] for p in pts) / len(pts), 6), round(sum(p[1] for p in pts) / len(pts), 6)
+        return [s, name, ', '.join(sorted(routes)), lat, lon, chair, f.station_kind[s], ' '.join(sorted(f.station_stops[s]))]
+    o.table('Stations', ['Station ID', 'Station name', 'Rail routes', 'Latitude', 'Longitude', 'Wheelchair boarding code', 'Kind', 'Stop IDs'],
+            (station_row(s, routes) for s, routes in sorted(f.station_routes.items())))
     rail_exceptions = [r for r in f.exceptions if r['service_id'] in f.service_routes]
     o.table('Calendar exceptions', ['Service date', 'Holiday name', 'Service ID', 'Rail routes', 'Exception type', 'Meaning'],
             ([parse_date(r['date']).isoformat(), r.get('holiday_name', ''), r['service_id'], ', '.join(sorted(f.service_routes[r['service_id']])), r['exception_type'], 'Add service' if r['exception_type'] == '1' else 'Remove service'] for r in rail_exceptions))
@@ -322,7 +357,7 @@ def build(feed, out):
     for d, name in watch.items():
         holiday_dates.setdefault(date.fromisoformat(d), name)
     for day, name in sorted(holiday_dates.items()):
-        for route in ROUTES:
+        for route in ALL_ROUTES:
             row = next((r for r in f.calendar if r[0] == day.isoformat() and r[3] == route), None)
             holiday_rows.append([day.isoformat(), day.strftime('%A'), name, route, row[4] if row else None,
                                  'Published in feed; subject to update' if row else 'Outside feed; times not published here',
@@ -332,7 +367,7 @@ def build(feed, out):
 
     alerts_status = 'ok'
     try:
-        alert_url = API + '/alerts?' + urllib.parse.urlencode({'filter[route]': ','.join(ROUTES), 'page[limit]': 100})
+        alert_url = API + '/alerts?' + urllib.parse.urlencode({'filter[route]': ','.join(ALL_ROUTES), 'page[limit]': 100})
         alerts = []
         while alert_url:
             payload = json.loads(fetch(alert_url))
@@ -358,7 +393,7 @@ def build(feed, out):
     ws.write_row(0, 0, ['Input / result', 'Value', 'How to use'], o.header)
     sample_day = max(f.start, min(datetime.now(TZ).date(), f.end)).isoformat()
     inputs = [('Service date', sample_day, 'YYYY-MM-DD; choose a covered service date.'),
-              ('Route', 'Red', ', '.join(ROUTES)), ('Station ID', 'place-pktrm', 'Look up IDs on Stations.'),
+              ('Route', 'Red', ', '.join(ALL_ROUTES)), ('Station ID', 'place-pktrm', 'Look up IDs on Stations.'),
               ('Direction ID', 0, '0 or 1; direction names depend on route.'),
               ('Destination (optional)', 'Ashmont', 'Exact headsign from Destination hours; blank = any destination on chosen route/direction.'),
               ('Platform arrival service time', '08:00:00', 'HH:MM:SS as text, including 24+ hours after midnight.')]
@@ -387,12 +422,13 @@ def build(feed, out):
     ws.write(15, 2, 'Selected service day only. No rollover to the next service day; no result means no further matching departure in that profile.')
     ws.write(16, 0, 'Scheduled estimate')
     ws.write(16, 2, 'This is not live. It assumes you are already at the platform. Add your own walking / transfer buffer before entering arrival time.')
-    ws.data_validation('B3', {'validate': 'list', 'source': list(ROUTES)})
+    ws.data_validation('B3', {'validate': 'list', 'source': list(ALL_ROUTES)})
     ws.data_validation('B5', {'validate': 'integer', 'criteria': 'between', 'minimum': 0, 'maximum': 1})
     o.wb.close()
     manifest = {'generated_utc': generated, 'source_url': FEED_URL, 'sha256': digest, 'feed_info': f.info,
                 'local_archive': str(archive.relative_to(ROOT)), 'alerts_retrieved_utc': alerts_retrieved,
-                'routes': list(ROUTES), 'station_count': len(f.station_routes), 'profile_count': len(f.profiles),
+                'routes': list(ALL_ROUTES), 'rail_routes': list(ROUTES), 'silver_routes': list(SILVER),
+                'station_count': sum(k == 'rail' for k in f.station_kind.values()), 'silver_station_count': sum(k == 'silver' for k in f.station_kind.values()), 'profile_count': len(f.profiles),
                 'rail_stop_times': sum(map(len, f.events.values())), 'timepoint_counts': dict(Counter(e['timepoint'] for es in f.events.values() for e in es)),
                 'sheet_rows': o.counts, 'alerts_status': alerts_status, 'alert_count': len(alerts), 'blank_times': f.skipped_blanks,
                 'excluded_multi_route_bus_shuttle_trips': len(f.excluded_shuttle_trips)}

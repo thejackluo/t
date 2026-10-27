@@ -39,13 +39,13 @@ The existing builder, single-departure lookup, and validator form the establishe
 
 **Done when:** a ride → foot/transfer → ride example evaluates correctly, lengthening the middle leg selects a later train or reports infeasibility, and midnight/calendar/terminal cases have meaningful checks. Keep official clock-boundary allowances separate from timetable fields.
 
-### B4 — Silver Line extension (later)
+### B4 — Silver Line extension
 
 **Depends on:** a working rail contract/evaluator and a reviewed Silver route/stop inventory.
 
-- [ ] Include explicitly selected Silver routes and direction-specific boarding stops, including stops without rail-style parent stations.
+- [x] Include explicitly selected Silver routes (741 SL1, 742 SL2, 743 SL3, 746 SLW, 749 SL5, 751 SL4) and direction-specific boarding stops; street stops without a GTFS parent are grouped into `silver-*` stations with their stop IDs exported (`Stations.Stop IDs`).
 - [ ] Extend calendar/timing/coverage checks and preserve existing rail-only scenarios.
-- [ ] Keep required inventory and unresolved Silver-specific rule interpretations explicit.
+- [x] Keep required inventory and unresolved Silver-specific rule interpretations explicit: Silver stations carry `Kind = silver`, the evaluator reports `silver_covered`/`silver_missing` separately from the 125-station rail set, and the coverage label says the Silver visit rule still needs clarification.
 
 **Done when:** rail-only rehearsal and rail-plus-Silver profiles use the same evaluator without silently changing their coverage definitions. Full-record completeness also requires reconciling the supplied station-list attachment.
 
@@ -55,7 +55,7 @@ The backend owns transit identity, connectivity, schedule feasibility, and sourc
 
 ## Deliverable and confirmed scope
 
-The existing workbook covers core rail and all service dates in its published snapshot: **Red, Mattapan, Orange, Blue, Green-B, Green-C, Green-D, Green-E**. Silver Line, other buses, replacement shuttle buses, Commuter Rail, and ferries are excluded from that export. The supplied record rules are documented separately; the official station-list attachment and certain Silver-specific interpretations remain outstanding.
+The existing workbook covers core rail and all service dates in its published snapshot: **Red, Mattapan, Orange, Blue, Green-B, Green-C, Green-D, Green-E**. The export now also carries the six Silver Line routes as `kind = silver` stations and patterns; other buses, replacement shuttle buses, Commuter Rail, and ferries are excluded. The supplied record rules are documented separately; the official station-list attachment and certain Silver-specific interpretations remain outstanding.
 
 **Future product scope:** Silver Line support is requested for later delivery; the supplied [Guinness rules](../../docs/references/GUINNESS-RULES.md) require it for the full attempt. The existing workbook remains a rail-only snapshot. Old Phase 7 numbering belongs to the archived proposal, not a current backend execution queue.
 
