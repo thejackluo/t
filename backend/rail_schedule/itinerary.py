@@ -68,7 +68,7 @@ class RailNetwork:
         wanted = {t for _, t in trips}
         self.stops, self.trip_meta, shapes = {}, {}, defaultdict(list)
         self.transfer_rules = defaultdict(list)
-        self.pathways = defaultdict(list)
+        self.pathways, self.reverse_pathways = defaultdict(list), defaultdict(list)
         with zipfile.ZipFile(archive) as z:
             def table(name):
                 with z.open(name) as raw:
@@ -92,8 +92,14 @@ class RailNetwork:
                     length = float(r['length'] or distance(self.stop_point(a), self.stop_point(b)))
                     seconds = length / 1.2  # Explicit provisional indoor walking assumption.
                 self.pathways[a].append((b, seconds, estimated))
+                self.reverse_pathways[b].append((a, seconds, estimated))
                 if r['is_bidirectional'] == '1':
                     self.pathways[b].append((a, seconds, estimated))
+                    self.reverse_pathways[a].append((b, seconds, estimated))
+        self.entrances = defaultdict(list)
+        for stop_id, r in self.stops.items():
+            if r['location_type'] == '2' and r['parent_station'] in self.stations:
+                self.entrances[r['parent_station']].append(stop_id)
         shapes = {s: [p for _, p in sorted(points)] for s, points in shapes.items()}
         self.patterns, self.scheduled, self.starts = {}, defaultdict(list), defaultdict(list)
         for (profile, trip), calls in trips.items():
@@ -267,11 +273,47 @@ class RailNetwork:
         self._path_cache[key] = None
         return None
 
+    def entrance_costs(self, stop, graph):
+        """Pathway seconds from a platform to each street entrance of its station (or to it, on the reverse graph)."""
+        doors, costs, q, visited = set(self.entrances.get(self.parent(stop), [])), {}, [(0, stop)], set()
+        while q and len(costs) < len(doors):
+            t, node = heapq.heappop(q)
+            if node in visited:
+                continue
+            visited.add(node)
+            if node in doors:
+                costs[node] = t
+            for target, cost, _ in graph[node]:
+                heapq.heappush(q, (t + cost, target))
+        return costs
+
+    def street_transfer(self, origin, destination, buffer, why):
+        """Explicitly estimated exit → outdoor walk → re-entry when GTFS forbids or lacks an in-station platform change.
+
+        Built only from the station's own GTFS entrances and pathways plus a straight-line outdoor walk; it never
+        invents a directed in-station transfer, and it is labelled street-level so the plan shows the re-entry.
+        """
+        if self.parent(origin) != self.parent(destination):
+            return None
+        exits, entries = self.entrance_costs(origin, self.pathways), self.entrance_costs(destination, self.reverse_pathways)
+        if not exits or not entries:
+            return None
+        plans = [(out + distance(self.stop_point(a), self.stop_point(b)) / 1.2 + back, a, b, distance(self.stop_point(a), self.stop_point(b)))
+                 for a, out in exits.items() for b, back in entries.items()]
+        seconds, door_out, door_in, meters = min(plans)
+        names = self.stops[door_out].get('stop_name', door_out), self.stops[door_in].get('stop_name', door_in)
+        return {'seconds': math.ceil(seconds + buffer), 'walk_seconds': math.ceil(seconds), 'minimum_seconds': 0,
+                'buffer_seconds': buffer, 'estimated': True, 'fallback': True, 'street_level': True,
+                'via': [door_out, door_in], 'via_names': list(names), 'outdoor_meters': round(meters),
+                'source': f'estimated street-level transfer: exit via {names[0]}, walk about {round(meters)} m outdoors, '
+                          f're-enter via {names[1]}; {why}'}
+
     def transfer(self, origin, destination, buffer=0, from_trip=None, to_trip=None, station_change=120):
         """Directed platform constraints; trip-specific GTFS rules remain trip-specific.
 
-        A station with no GTFS pathway data at all gets an explicitly estimated same-station platform change;
-        a station whose pathways exist but do not connect two platforms keeps the GTFS answer (no transfer).
+        A station with no GTFS pathway data at all gets an explicitly estimated same-station platform change.
+        Where GTFS forbids the in-station transfer or its pathways do not connect two platforms, the only option is
+        an explicitly estimated street-level exit and re-entry; without reachable entrances there is no transfer.
         """
         rules = self.transfer_rules.get((origin, destination), [])
         applicable = [r for r in rules if (not r['from_trip_id'] or r['from_trip_id'] == from_trip)
@@ -281,7 +323,7 @@ class RailNetwork:
             specificity = max(bool(r['from_trip_id']) + bool(r['to_trip_id']) for r in applicable)
             applicable = [r for r in applicable if bool(r['from_trip_id']) + bool(r['to_trip_id']) == specificity]
         if any(r['transfer_type'] == '3' for r in applicable):
-            return None
+            return self.street_transfer(origin, destination, buffer, 'GTFS marks the in-station transfer as not possible')
         path = self.pathway_time(origin, destination)
         if path is None and not applicable:
             station = self.parent(origin)
@@ -289,7 +331,7 @@ class RailNetwork:
                 return {'seconds': math.ceil(station_change + buffer), 'walk_seconds': math.ceil(station_change),
                         'minimum_seconds': 0, 'buffer_seconds': buffer, 'estimated': True, 'fallback': True,
                         'source': 'estimated platform change; this station has no GTFS pathways'}
-            return None
+            return self.street_transfer(origin, destination, buffer, 'GTFS pathways do not connect these platforms inside the station')
         minimum = max([float(r['min_transfer_time'] or 0) for r in applicable] + [0])
         walk = max([float(r['min_walk_time'] or 0) for r in applicable] + [path[0] if path else 0])
         suggested = max([float(r['suggested_buffer_time'] or 0) for r in applicable] + [0])
@@ -327,6 +369,7 @@ class RailNetwork:
                     answers.append({'legs': legs, 'transfers': len(legs) - 1, 'approx_minutes': round(cost / 60),
                                     'revisited_stations': revisits,
                                     'estimated_transfers': any(l.get('transfer_estimated') for l in legs),
+                                    'street_transfers': any(l.get('transfer_street_level') for l in legs),
                                     'label': ' → '.join(x['route'] for x in legs)})
                     signatures.add(signature)
                 continue
@@ -381,9 +424,11 @@ class RailNetwork:
                     leg = self.ride(pid, i, j)
                     if transfer.get('fallback'):
                         leg['transfer_estimated'] = True
+                    if transfer.get('street_level'):
+                        leg['transfer_street_level'] = True
                     travel = max(1, c['arrival'] - p['calls'][i]['departure'])
                     # Ranking only: exact feasible trips are evaluated after the user selects a path.
-                    penalty = (300 if legs else 0) + 300 * repeated
+                    penalty = (300 if legs else 0) + 300 * repeated + (300 if transfer.get('street_level') else 0)
                     total = cost + travel + transfer['seconds'] + penalty
                     heapq.heappush(queue, (total + remaining(c['station']), total, next(serial), c['station'],
                                            c['stop'], legs + [leg], visited | intermediate | {leg['from']}, revisits + repeated))

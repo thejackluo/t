@@ -75,9 +75,13 @@ class ItineraryTests(unittest.TestCase):
         rules = defaultdict(list, {(a, b): [rule, {**rule, 'from_trip_id': 'blocked-trip', 'transfer_type': '3'}]})
         with patch.object(self.n, 'transfer_rules', rules), patch.object(self.n, 'pathway_time', return_value=(50, False)):
             self.assertEqual(self.n.transfer(a, b, 30, 'other-trip', 'target')['seconds'], 150)
-            self.assertIsNone(self.n.transfer(a, b, 30, 'blocked-trip', 'target'))
+            blocked = self.n.transfer(a, b, 30, 'blocked-trip', 'target')
+            self.assertTrue(blocked['street_level'] and blocked['fallback'])  # Priced as a re-entry, never as the forbidden edge.
+            with patch.object(self.n, 'entrances', defaultdict(list)):
+                self.assertIsNone(self.n.transfer(a, b, 30, 'blocked-trip', 'target'))
         with patch.object(self.n, 'transfer_rules', rules), patch.object(self.n, 'pathway_time', return_value=None):
-            self.assertIsNone(self.n.transfer(b, a))  # Never manufacture the reverse directed edge.
+            reverse = self.n.transfer(b, a)  # Never manufacture the reverse directed edge; only a labelled street re-entry.
+            self.assertTrue(reverse['street_level'] and reverse['fallback'])
 
     def test_staying_on_one_trip_does_not_charge_another_wait_or_transfer(self):
         full = self.direct('place-alfcl', 'place-asmnl')
@@ -170,7 +174,10 @@ class ItineraryTests(unittest.TestCase):
         blocked = defaultdict(list, {(legs[0]['to_stop'], legs[1]['from_stop']): [
             {'from_trip_id': '', 'to_trip_id': '', 'transfer_type': '3', 'min_transfer_time': '', 'min_walk_time': '', 'suggested_buffer_time': ''}]})
         with patch.object(self.n, 'transfer_rules', blocked):
-            result = self.n.evaluate(self.scenario(legs))
+            priced = self.n.evaluate(self.scenario(legs))
+            self.assertTrue(priced['legs'][1]['transfer']['street_level'])  # Forbidden in-station change priced as a re-entry.
+            with patch.object(self.n, 'entrances', defaultdict(list)):
+                result = self.n.evaluate(self.scenario(legs))
         self.assertEqual(result['legs'][1]['reason_code'], 'transfer_not_permitted')
         self.assertIn(legs[1]['from_stop'], result['legs'][1]['message'])
 
@@ -193,10 +200,33 @@ class ItineraryTests(unittest.TestCase):
         change = self.n.transfer(inbound, outbound, 30, station_change=90)
         self.assertTrue(change['fallback'] and change['estimated'])
         self.assertEqual(change['seconds'], 120)
-        # Park Street has GTFS pathways, so an unconnected platform pair there stays unavailable.
+        # Park Street has GTFS pathways: an unconnected platform pair there only gets a labelled street-level re-entry,
+        # and nothing at all once no entrance is reachable.
         self.assertIn('place-pktrm', self.n.pathway_stations)
         with patch.object(self.n, 'transfer_rules', defaultdict(list)), patch.object(self.n, 'pathway_time', return_value=None):
-            self.assertIsNone(self.n.transfer('70196', '70075'))
+            self.assertTrue(self.n.transfer('70196', '70075')['street_level'])
+            with patch.object(self.n, 'pathways', defaultdict(list)):
+                self.assertIsNone(self.n.transfer('70196', '70075'))
+
+    def test_forbidden_in_station_transfer_becomes_an_estimated_street_level_re_entry(self):
+        # GTFS transfer_type 3 at Copley: westbound and eastbound platforms are only linked by crossing Boylston Street.
+        change = self.n.transfer('70154', '70155', 30)
+        self.assertTrue(change['street_level'] and change['estimated'] and change['fallback'])
+        self.assertEqual(change['via'], ['door-coecl-bpl', 'door-coecl-church'])
+        self.assertGreater(change['walk_seconds'], 2 * 44)  # Both GTFS stair pathways plus the outdoor walk.
+        self.assertEqual(change['seconds'], change['walk_seconds'] + 30)
+        self.assertIn('street-level', change['source'])
+        with patch.object(self.n, 'entrances', defaultdict(list)):
+            self.assertIsNone(self.n.transfer('70154', '70155', 30))
+        # Reversing direction at Copley is now searchable and timed, labelled as a street transfer.
+        found = self.n.options('place-lake', 'place-hsmnl', '2026-10-22')['options']
+        self.assertTrue(any(o['street_transfers'] and o['legs'][0]['to'] == 'place-coecl' for o in found))
+        to_copley = self.n.options('place-lake', 'place-coecl', '2026-10-22', 'Green-B')['options'][0]['legs']
+        onward = self.n.options('place-coecl', 'place-hsmnl', '2026-10-22', 'Green-E')['options'][0]['legs']
+        legs = self.n.evaluate(self.scenario(to_copley + onward))['legs']
+        self.assertEqual([l['status'] for l in legs], ['ok', 'ok'])
+        self.assertTrue(legs[1]['transfer']['street_level'])
+        self.assertGreaterEqual(legs[1]['departure'], legs[0]['arrival'] + legs[1]['transfer']['seconds'])
 
     def test_invalid_geometry_modes_and_assumptions_are_rejected(self):
         for legs in ([None], [{'mode': 'drive'}], [{**self.foot('place-pktrm', 'place-dwnxg'), 'geometry': [[float('nan'),0],[0,0]]}]):
