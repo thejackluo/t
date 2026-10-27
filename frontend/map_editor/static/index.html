@@ -23,14 +23,14 @@
     <aside class="builder panel">
       <div class="section-heading"><span class="eyebrow">01 / BUILD A CONNECTION</span><button id="reset-endpoints" class="text-button">Reset</button></div>
       <h1>Follow the tracks.<br>Make it your route.</h1>
-      <p class="muted">Choose a mode, then click two stations, or press on a station or its track and drag along the line; the path previews live as you drag. Hover a segment to see its scheduled time. Tracks stay fixed.</p>
-      <fieldset class="mode-picker"><legend class="sr-only">Connection mode</legend><label><input type="radio" name="mode" value="ride" checked><span>▰ Ride</span></label><label><input type="radio" name="mode" value="run"><span>↗ Run</span></label><label><input type="radio" name="mode" value="walk"><span>↝ Walk</span></label></fieldset>
+      <p class="muted">Click two stations, or press on a station or its track and drag along the line; the path previews live as you drag. <strong>Auto</strong> times the rail paths and a street run for the same pair and puts the fastest first. Hover a segment to see its scheduled time. Tracks stay fixed.</p>
+      <fieldset class="mode-picker"><legend class="sr-only">Connection mode</legend><label><input type="radio" name="mode" value="auto" checked><span>⚡ Auto</span></label><label><input type="radio" name="mode" value="ride"><span>▰ Ride</span></label><label><input type="radio" name="mode" value="run"><span>↗ Run</span></label></fieldset>
       <label class="field">From station<input id="from-search" list="station-options" placeholder="Search a station…" autocomplete="off"><select id="from-station" aria-label="From station"></select></label>
       <div class="connection-line"><span>↓</span><button id="swap" class="text-button">Swap endpoints ⇅</button></div>
       <label class="field">To station<input id="to-search" list="station-options" placeholder="Search a station…" autocomplete="off"><select id="to-station" aria-label="To station"></select></label>
       <datalist id="station-options"></datalist>
       <label class="field" id="route-field">Rail preference<select id="line-filter"><option value="">All rail lines · transfers allowed</option></select></label>
-      <button id="find-routes" class="primary wide">Preview rail paths →</button>
+      <button id="find-routes" class="primary wide">Preview fastest connection →</button>
       <div id="editing-banner" class="notice" hidden></div>
       <div id="path-options" aria-live="polite"><p class="empty-copy">Your path options will appear here. Rail paths include every intermediate station.</p></div>
       <button id="add-path" class="primary wide" hidden>Add selected path to itinerary</button>

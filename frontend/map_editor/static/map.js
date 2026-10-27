@@ -351,15 +351,22 @@ export class RouteMap {
     return found;
   }
 
-  async suggestFoot(index){
+  async footRoute(from,to){
+    /* Browser-side Google pedestrian route between two stations; same shape as the server's /api/foot-route answer. */
     if(!this.googleMap)throw Error('Connect Google Maps first to request a street-route suggestion.');
-    const leg=this.state.legs[index];
     const {Route}=await google.maps.importLibrary('routes');
-    const {routes}=await Route.computeRoutes({origin:latLng(this.stations[leg.from].point),destination:latLng(this.stations[leg.to].point),travelMode:'WALKING',fields:['path']});
-    if(this.state.legs[index]?.id!==leg.id)throw Error('The segment changed while Google was finding its route. Try again.');
+    const {routes}=await Route.computeRoutes({origin:latLng(this.stations[from].point),destination:latLng(this.stations[to].point),travelMode:'WALKING',fields:['path','distanceMeters','duration']});
     if(!routes?.length)throw Error('No pedestrian route returned. Check entrances or draw a path manually.');
     const points=routes[0].path.map(p=>[typeof p.lat==='function'?p.lat():p.lat,typeof p.lng==='function'?p.lng():p.lng]);
-    points[0]=this.stations[leg.from].point;points[points.length-1]=this.stations[leg.to].point;
+    points[0]=this.stations[from].point;points[points.length-1]=this.stations[to].point;
+    const seconds=routes[0].duration?.seconds??(parseInt(String(routes[0].duration||'0').replace(/\D/g,''),10)||undefined);
+    return {geometry:points,provider_distance:routes[0].distanceMeters||0,provider_seconds:seconds};
+  }
+
+  async suggestFoot(index){
+    const leg=this.state.legs[index];
+    const {geometry:points}=await this.footRoute(leg.from,leg.to);
+    if(this.state.legs[index]?.id!==leg.id)throw Error('The segment changed while Google was finding its route. Try again.');
     this.callbacks.foot(index,points,'google_routes');
   }
 }

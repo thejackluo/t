@@ -35,7 +35,9 @@ function storedKey(value,remember){
     return localStorage.getItem(KEY)||sessionStorage.getItem(KEY)||'';
   }catch{return '';}
 }
-function currentMode(){return document.querySelector('[name=mode]:checked').value;}
+const PREVIEW_LABEL={auto:'Preview fastest connection →',ride:'Preview rail paths →',run:'Preview running route →'};
+function currentMode(){return document.querySelector('[name=mode]:checked')?.value||'auto';}
+function previewLabel(){return PREVIEW_LABEL[currentMode()]||PREVIEW_LABEL.auto;}
 function assumptions(){return {run_pace:+$('run-pace').value,walk_pace:+$('walk-pace').value,buffer:+$('transfer-buffer').value,access:+$('access-time').value,station_change:+$('station-change').value};}
 function syncInputs(){
   $('scenario-name').value=scenario.name;$('service-date').value=scenario.date;$('start-time').value=scenario.time;
@@ -73,26 +75,71 @@ function pickStation(id){
 async function findPaths(quiet=false){
   const from=$('from-station').value,to=$('to-station').value;
   if(!from||!to||from===to)throw Error('Choose two different stations first.');
-  const serial=++optionsSerial;
-  choices=[];$('add-path').hidden=true;$('find-routes').disabled=true;$('find-routes').textContent='Finding connected paths…';
+  const serial=++optionsSerial,mode=currentMode();
+  choices=[];$('add-path').hidden=true;$('find-routes').disabled=true;$('find-routes').textContent=mode==='auto'?'Comparing rail and running…':mode==='ride'?'Finding connected paths…':'Finding the running route…';
   try{
-    if(currentMode()==='ride'){
-      const result=await request('/api/options?'+new URLSearchParams({from,to,date:scenario.date,route:$('line-filter').value,time:scenario.time}));
-      if(serial!==optionsSerial)return;choices=result.options;
-      if(!choices.length){$('path-options').innerHTML=`<p class="notice">${esc(result.message)}</p>`;renderMap();return;}
-    }else{
-      choices=[{label:currentMode()==='run'?'Outdoor run':'Outdoor walk',transfers:0,legs:[{mode:currentMode(),from,to,
-        geometry:[stations[from].point,stations[to].point],geometry_source:'straight_line_sketch',stations:[]}]}];
-    }
-    choice=0;renderOptions();renderMap();if(!quiet)map.fit();
-  }finally{$('find-routes').disabled=false;$('find-routes').textContent=currentMode()==='ride'?'Preview rail paths →':'Preview foot connection →';}
+    const railRequest=()=>request('/api/options?'+new URLSearchParams({from,to,date:scenario.date,route:$('line-filter').value,time:scenario.time}));
+    const [rail,run]=await Promise.all([
+      mode==='run'?null:mode==='ride'?railRequest():railRequest().catch(error=>({options:[],message:error.message})),
+      mode==='ride'?null:runOption(from,to,quiet)]);
+    if(serial!==optionsSerial)return;
+    const found=[...(rail?.options||[]).map(o=>({...o,kind:'ride'})),...(run?[run]:[])];
+    if(!found.length){$('path-options').innerHTML=`<p class="notice">${esc(rail?.message||'No connection found.')}</p>`;renderMap();return;}
+    await timeChoices(found);
+    if(serial!==optionsSerial)return;
+    if(mode==='auto')found.sort((a,b)=>(a.arrival??Infinity)-(b.arrival??Infinity));
+    choices=found;choice=0;renderOptions();
+    if(rail&&!rail.options.length&&rail.message)$('path-options').insertAdjacentHTML('afterbegin',`<p class="notice">${esc(rail.message)}</p>`);
+    renderMap();if(!quiet)map.fit();
+  }finally{$('find-routes').disabled=false;$('find-routes').textContent=previewLabel();}
+}
+async function runOption(from,to,quiet){
+  /* A running alternative for the same station pair. Dragging previews a straight-line sketch so Google is only asked once, on release. */
+  const sketch={mode:'run',from,to,geometry:[stations[from].point,stations[to].point],geometry_source:'straight_line_sketch',stations:[]};
+  const option={label:'Outdoor run',transfers:0,kind:'run',legs:[sketch]};
+  if(quiet){option.note='Straight-line estimate while dragging; release to load the street route.';return option;}
+  try{
+    const route=await streetRoute(from,to);
+    option.legs=[{...sketch,geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds}];
+    option.provider_distance=route.provider_distance;option.provider_seconds=route.provider_seconds;
+  }catch(error){option.note=`Straight-line estimate, not a street route: ${error.message}`;}
+  return option;
+}
+async function streetRoute(from,to){
+  if(config.foot_routing)return request('/api/foot-route?'+new URLSearchParams({from,to}));
+  if(map?.googleMap)return map.footRoute(from,to);
+  throw Error('street routing needs Google Maps connected in this browser or GOOGLE_ROUTES_API_KEY on the server.');
+}
+async function timeChoices(found){
+  /* Predicted arrival of each alternative appended to (or replacing a segment of) the current itinerary, so rail and running compare on the same clock. */
+  await Promise.all(found.map(async option=>{
+    const candidate=clone(scenario);
+    const previous=replaceIndex>=0?candidate.legs[replaceIndex-1]:candidate.legs.at(-1);
+    const legs=option.legs.map(l=>({...clone(l),id:uid()}));
+    if(previous&&previous.to===legs[0].from){if(replaceIndex>=0)candidate.legs.splice(replaceIndex,1,...legs);else candidate.legs.push(...legs);}
+    else{candidate.legs=legs;option.standalone=!!previous;}
+    try{
+      const result=await request('/api/evaluate',candidate);
+      const last=result.legs[result.legs.indexOf(result.legs.find(l=>l.id===legs.at(-1).id))]||result.legs.at(-1);
+      option.arrival=last.status==='unavailable'?last.estimated_arrival:last.arrival;
+      const mine=result.legs.filter(l=>legs.some(c=>c.id===l.id));
+      option.estimated=mine.some(l=>l.status==='unavailable'||l.time_kind==='estimated')||option.kind==='run';
+      option.estimated_transfer=mine.some(l=>l.transfer?.estimated);
+      option.blocked=result.legs.some(l=>legs.some(c=>c.id===l.id)&&l.status==='blocked');
+      option.minutes=Math.round(result.legs.filter(l=>legs.some(c=>c.id===l.id)).reduce((sum,l)=>sum+(l.travel_seconds||0)+(l.wait_seconds||0)+(l.transfer_seconds||0)+(l.access_seconds||0),0)/60);
+    }catch(error){option.timing_error=error.message;}
+  }));
 }
 function chips(legs){return legs.map(l=>`<span class="chip" style="--route:${colors[l.route]||'#7952c7'}">${esc(l.route||l.mode.toUpperCase())}</span>`).join('<span aria-hidden="true">›</span>');}
 function renderOptions(){
   $('path-options').innerHTML=choices.map((o,i)=>{
     const foot=o.legs[0].mode!=='ride';
     const intermediates=new Set(o.legs.flatMap(l=>l.stations));
-    return `<button class="path-option" data-choice="${i}" aria-pressed="${i===choice}"><strong>${esc(o.label)}</strong><span class="path-chips">${chips(o.legs)}</span><small>${foot?'Foot sketch · editable waypoints · inspect street access':`${intermediates.size} stations · ${o.transfers} transfer${o.transfers===1?'':'s'}${o.revisited_stations?` · ${o.revisited_stations} repeated`:''}${o.estimated_transfers?' · estimated platform change':''} · follows official rail shapes`}</small>${o.transfers?`<small>Change at ${o.legs.slice(0,-1).map(l=>esc(name(l.to))).join(', ')}</small>`:''}</button>`;
+    const fastest=currentMode()==='auto'&&i===0&&choices.length>1&&o.arrival!==undefined&&!o.blocked;
+    const kind=foot?'estimated run':o.estimated?'estimated rail':o.estimated_transfer?'scheduled rail, estimated transfer':'scheduled rail';
+    const timing=o.blocked?'Does not connect from the current itinerary':o.arrival!==undefined?`Arrive ${fmt(o.arrival)} · ${o.minutes} min incl. waits${o.standalone?' (from service time, not chained)':''} · ${kind}`:o.timing_error?`Timing unavailable: ${esc(o.timing_error)}`:'';
+    const footDetail=o.legs[0].geometry_source==='google_routes'?`${(o.provider_distance/1000).toFixed(2)} km Google street route · Google walking estimate ${duration(o.provider_seconds)} · session-only`:esc(o.note||'Straight-line sketch · editable waypoints');
+    return `<button class="path-option" data-choice="${i}" aria-pressed="${i===choice}"><strong>${esc(o.label)}${fastest?'<span class="leg-badge" data-kind="scheduled">fastest</span>':''}</strong><span class="path-chips">${chips(o.legs)}</span>${timing?`<small class="option-timing">${timing}</small>`:''}<small>${foot?footDetail:`${intermediates.size} stations · ${o.transfers} transfer${o.transfers===1?'':'s'}${o.revisited_stations?` · ${o.revisited_stations} repeated`:''}${o.street_transfers?' · exit & re-enter at street level (estimated)':o.estimated_transfers?' · estimated platform change':''} · follows official rail shapes`}</small>${o.transfers?`<small>Change at ${o.legs.slice(0,-1).map(l=>esc(name(l.to))).join(', ')}</small>`:''}</button>`;
   }).join('');
   $('add-path').hidden=!choices.length;$('add-path').textContent=replaceIndex>=0?'Replace this segment with selected path':'Add selected path to itinerary';
 }
@@ -105,20 +152,17 @@ function addPath(){
     if(replaceIndex>=0)scenario.legs.splice(replaceIndex,1,...added);else scenario.legs.push(...added);
   });
   const final=selected.legs.at(-1).to;replaceIndex=-1;footIndex=-1;setEndpoint('from',final);setEndpoint('to','');render();
-  const addedFoot=selected.legs[0].mode!=='ride'?scenario.legs.findIndex(l=>l.id===lastAdded[0]):-1;
+  const addedFoot=selected.legs[0].mode!=='ride'&&selected.legs[0].geometry_source!=='google_routes'?scenario.legs.findIndex(l=>l.id===lastAdded[0]):-1;
   if(addedFoot>=0)suggestStreets(addedFoot).catch(error=>notify(`Connection added as a straight-line sketch: ${error.message}`));
   else notify('Connection added. Choose the next destination to extend your route.');
 }
 async function suggestStreets(index){
   const leg=scenario.legs[index];if(!leg||leg.mode==='ride')return;
-  if(config.foot_routing){
-    const route=await request('/api/foot-route?'+new URLSearchParams({from:leg.from,to:leg.to}));
-    if(scenario.legs[index]?.id!==leg.id)return;
-    mutate(()=>{Object.assign(scenario.legs[index],{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});});
-    notify(`Street route loaded: ${(route.provider_distance/1000).toFixed(2)} km, Google walking estimate ${duration(route.provider_seconds)}. Session-only; inspect entrances.`);
-  }else if(map.googleMap){
-    await map.suggestFoot(index);notify('Street suggestion loaded for this session. Check station entrances and pedestrian access.');
-  }else throw Error('street routing needs Google Maps connected in this browser or GOOGLE_ROUTES_API_KEY on the server. Use Edit foot path to draw it.');
+  let route;
+  try{route=await streetRoute(leg.from,leg.to);}catch(error){throw Error(`${error.message} Use Edit foot path to draw it.`);}
+  if(scenario.legs[index]?.id!==leg.id)return;
+  mutate(()=>{Object.assign(scenario.legs[index],{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});});
+  notify(`Street route loaded: ${(route.provider_distance/1000).toFixed(2)} km, Google walking estimate ${duration(route.provider_seconds)}. Session-only; inspect entrances.`);
 }
 function renderMap(){
   if(!map)return;
@@ -138,9 +182,11 @@ function render(){
   $('itinerary-legs').innerHTML=scenario.legs.length?scenario.legs.map((leg,i)=>{
     const evaluated=evaluation?.legs[i],foot=leg.mode!=='ride',status=evaluated?.status||'pending';
     const item=evaluated||leg;
-    const badge=status==='unavailable'?'<span class="leg-badge">estimated</span>':evaluated?.transfer?.fallback?'<span class="leg-badge">est. platform change</span>':'';
+    const badge=status==='unavailable'?'<span class="leg-badge">estimated</span>':evaluated?.transfer?.street_level?'<span class="leg-badge">est. street transfer</span>':evaluated?.transfer?.fallback?'<span class="leg-badge">est. platform change</span>':'';
     const stopTimes=!foot&&evaluated?.segments?.length?`<ol class="leg-stop-times">${evaluated.segments.map((s,k)=>`<li><span>${k===0?esc(name(s.from))+' → ':''}${esc(name(s.to))}</span><span>${s.time_kind==='estimated'?'~':''}${duration(s.seconds)}${s.arrival!==undefined?` · arr ${fmt(s.arrival)}`:''}</span></li>`).join('')}</ol>`:'';
-    const transfer=evaluated?.transfer_seconds?`<div class="transfer-note">↳ Internal transfer · ${duration(evaluated.transfer_seconds)} · directed platform ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)} (includes buffer)</div>`:'';
+    const street=evaluated?.transfer?.street_level?evaluated.transfer:null;
+    const transfer=street?`<div class="transfer-note">↳ Street-level transfer (estimated) · ${duration(evaluated.transfer_seconds)} · GTFS forbids the in-station change ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)}, so: exit ${esc(street.via_names?.[0]||street.via[0])}, about ${street.outdoor_meters} m outdoors, re-enter ${esc(street.via_names?.[1]||street.via[1])} (includes buffer)</div>`
+      :evaluated?.transfer_seconds?`<div class="transfer-note">↳ Internal transfer · ${duration(evaluated.transfer_seconds)} · directed platform ${esc(scenario.legs[i-1]?.to_stop||'')} → ${esc(leg.from_stop)} (includes buffer)</div>`:'';
     const ids=leg.stations||[];
     return `${transfer}<article class="leg-card" data-index="${i}" data-status="${status}"><div class="leg-header"><span class="leg-number">${String(i+1).padStart(2,'0')}</span><span class="chip" style="--route:${colors[leg.route]||'#7952c7'}">${esc(leg.route||leg.mode.toUpperCase())}</span><strong>${foot?'Foot connection':esc(item.headsign||'Rail ride')}${badge}</strong></div><div class="leg-body"><div class="leg-endpoints">${esc(name(leg.from))}<br><span class="muted">↓</span> ${esc(name(leg.to))}</div>
       <div class="leg-timing"><span>${status==='unavailable'?`~${fmt(evaluated.start_time)} → ${fmt(evaluated.estimated_arrival)} (estimated)`:`${fmt(evaluated?.departure)} → ${fmt(evaluated?.arrival)}`}</span><span>${duration(evaluated?.travel_seconds)} ${foot?leg.mode:'ride'}</span></div>
@@ -164,7 +210,7 @@ async function editAction(event){
     case 'remove':mutate(()=>scenario.legs.splice(index,1));footIndex=-1;invalidateOptions();render();break;
     case 'up':mutate(()=>[scenario.legs[index-1],scenario.legs[index]]=[scenario.legs[index],scenario.legs[index-1]]);footIndex=-1;render();break;
     case 'down':mutate(()=>[scenario.legs[index+1],scenario.legs[index]]=[scenario.legs[index],scenario.legs[index+1]]);footIndex=-1;render();break;
-    case 'replace':replaceIndex=index;footIndex=-1;document.querySelector(`[name=mode][value="${leg.mode}"]`).checked=true;modeChanged();setEndpoint('from',leg.from);setEndpoint('to',leg.to);render();await findPaths();break;
+    case 'replace':replaceIndex=index;footIndex=-1;(document.querySelector(`[name=mode][value="${leg.mode}"]`)||document.querySelector('[name=mode][value="run"]')).checked=true;modeChanged();setEndpoint('from',leg.from);setEndpoint('to',leg.to);render();await findPaths();break;
     case 'edit-foot':footIndex=index;invalidateOptions();render();map.fit();break;
     case 'done-foot':footIndex=-1;render();break;
     case 'apply-foot':{
@@ -181,7 +227,7 @@ function updateFoot(index,geometry,source){
   mutate(()=>{const l=scenario.legs[index];l.geometry=geometry;l.geometry_source=source||(l.geometry_source==='google_routes'?'google_routes':'user_drawn');if(l.geometry_source!=='google_routes')delete l.provider_seconds;});
 }
 function modeChanged(){
-  $('route-field').hidden=currentMode()!=='ride';$('find-routes').textContent=currentMode()==='ride'?'Preview rail paths →':'Preview foot connection →';invalidateOptions();renderMap();
+  $('route-field').hidden=currentMode()==='run';$('find-routes').textContent=previewLabel();invalidateOptions();renderMap();
 }
 function download(blob,filename){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 function filename(extension){return (scenario.name.replace(/[^a-z0-9_-]+/gi,'-')||'t-run-route')+'.'+extension;}
