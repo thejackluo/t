@@ -8,7 +8,7 @@ const fmt = s => {if(s===undefined||s===null)return '—';const h=Math.floor(s/3
 const duration = s => {if(s===undefined||s===null)return '—';const m=Math.round(s/60);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
 let data, stations, colors, map, config, scenario, evaluation=null;
 let choices=[], choice=0, replaceIndex=-1, footIndex=-1, evalSerial=0, optionsSerial=0;
-let undo=[],redo=[],messageTimer,lastAdded=[];
+let undo=[],redo=[],messageTimer,lastAdded=[],viewer=false;
 const CURRENT='t-run-map-current-v1', SAVED='t-run-map-saved-v1';
 const emptyMarkup=$('itinerary-legs').innerHTML;
 function canonicalLeg(leg){
@@ -52,7 +52,37 @@ function serializable(value=scenario){
   });
   return result;
 }
-function autosave(){try{localStorage.setItem(CURRENT,JSON.stringify(serializable()));}catch{notify('Browser storage unavailable. Use Export JSON to save this scenario.','error');}}
+function autosave(){if(viewer)return;try{localStorage.setItem(CURRENT,JSON.stringify(serializable()));}catch{notify('Browser storage unavailable. Use Export JSON to save this scenario.','error');}}
+/* View-only share links carry the scenario in the URL fragment: no server storage, Google street geometry already
+   replaced by serializable(), ride legs reduced to pattern/start/end because /api/evaluate rebuilds their shape. */
+const SHARE='#share=';
+function shareable(){
+  const s=serializable();
+  s.legs=s.legs.map(l=>l.mode==='ride'?{id:l.id,mode:'ride',pattern:l.pattern,start:l.start,end:l.end}
+    :{id:l.id,mode:l.mode,from:l.from,to:l.to,geometry:l.geometry,geometry_source:l.geometry_source});
+  return s;
+}
+const b64url={
+  encode(bytes){let text='';for(let i=0;i<bytes.length;i+=0x8000)text+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return btoa(text).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');},
+  decode(text){return Uint8Array.from(atob(text.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));}
+};
+async function encodeShare(value){
+  const bytes=new TextEncoder().encode(JSON.stringify(value));
+  if(!('CompressionStream' in window))return 'j'+b64url.encode(bytes);
+  const packed=await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
+  return 'z'+b64url.encode(new Uint8Array(packed));
+}
+async function decodeShare(text){
+  const bytes=b64url.decode(text.slice(1));
+  if(text[0]==='j')return JSON.parse(new TextDecoder().decode(bytes));
+  if(text[0]!=='z')throw Error('Unknown link format.');
+  if(!('DecompressionStream' in window))throw Error('This browser cannot open compressed share links; use a current Chrome, Edge, Safari or Firefox.');
+  return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
+}
+function enterViewer(on){
+  viewer=on;document.body.classList.toggle('viewer',on);$('viewer-banner').hidden=!on;
+  ['scenario-name','service-date','start-time'].forEach(id=>{$(id).disabled=on;});
+}
 function saved(){try{return JSON.parse(localStorage.getItem(SAVED)||'{}');}catch{return {};}}
 function savedList(){const s=saved();$('saved-scenarios').innerHTML='<option value="">Choose a saved scenario…</option>'+Object.keys(s).map(k=>`<option value="${esc(k)}">${esc(s[k].name)}</option>`).join('');}
 function mutate(fn){undo.push(clone(scenario));if(undo.length>50)undo.shift();redo=[];fn();evaluation=null;autosave();render();evaluate();}
@@ -67,7 +97,7 @@ function setEndpoint(side,id){
 }
 function resetEndpoints(){replaceIndex=-1;footIndex=-1;setEndpoint('from',scenario.legs.at(-1)?.to||'');setEndpoint('to','');render();}
 function invalidateOptions(){optionsSerial++;choices=[];$('add-path').hidden=true;$('path-options').innerHTML='<p class="empty-copy">Preview a connection to see its path options.</p>';}
-function pickStation(id){
+function pickStation(id){if(viewer)return;
   if(!$('from-station').value){setEndpoint('from',id);return;}
   if($('from-station').value===id){notify(`${name(id)} is your starting station. Choose another station as the destination.`);return;}
   setEndpoint('to',id);findPaths().catch(error=>notify(error.message,'error'));
@@ -255,6 +285,13 @@ async function boot(){
   scenario={schema:1,id:uid(),name:'Boston rail rehearsal',dataset:data.manifest.sha256,ruleset:data.ruleset,
     date:data.dates.includes(today)?today:data.dates[0],time:'08:00',assumptions:assumptions(),legs:[]};
   try{const stored=JSON.parse(localStorage.getItem(CURRENT)||'null');if(stored){validateScenario(stored);scenario=stored;}}catch(error){notify('Saved draft could not be loaded: '+error.message,'error');}
+  if(location.hash.startsWith(SHARE)){
+    try{
+      const shared=await decodeShare(location.hash.slice(SHARE.length));validateScenario(shared);
+      const checked=await request('/api/evaluate',shared);
+      scenario={...shared,legs:checked.legs.map(canonicalLeg)};enterViewer(true);
+    }catch(error){notify('Shared link could not be opened: '+error.message,'error');}
+  }
   const stationList=[...data.stations].sort((a,b)=>a.name.localeCompare(b.name));
   ['from','to'].forEach(side=>{
     $(side+'-station').innerHTML='<option value="">Select station…</option>'+stationList.map(s=>`<option value="${esc(s.id)}">${esc(s.name)} · ${esc(s.routes.join('/'))}</option>`).join('');
@@ -270,8 +307,8 @@ async function boot(){
   let hoverTimer;
   // Live previews during a drag must not move the map under the pointer; only a completed drag re-fits.
   const preview=(a,b,quiet)=>{setEndpoint('from',a);setEndpoint('to',b);findPaths(quiet).catch(e=>notify(e.message,'error'));};
-  map=new RouteMap($('map'),data,{pick:pickStation,drag:(a,b)=>{clearTimeout(hoverTimer);preview(a,b,false);},foot:updateFoot,
-    hover:(a,b)=>{clearTimeout(hoverTimer);if(!b||a===b)return;hoverTimer=setTimeout(()=>preview(a,b,true),180);},
+  map=new RouteMap($('map'),data,{pick:pickStation,drag:(a,b)=>{clearTimeout(hoverTimer);if(!viewer)preview(a,b,false);},foot:updateFoot,
+    hover:(a,b)=>{clearTimeout(hoverTimer);if(viewer||!b||a===b)return;hoverTimer=setTimeout(()=>preview(a,b,true),180);},
     format:{name,fmt,duration},
     googleError:message=>{storedKey(null);$('map-status').innerHTML='<i></i> Geographic track preview';$('google-open').hidden=false;notify(message,'error');}});
   $('origin-hint').textContent=location.origin+'/*';
@@ -298,6 +335,18 @@ async function boot(){
   on('forget-key','click',()=>{storedKey(null);$('google-feedback').textContent='Saved key removed from this browser. Reload to return to the track preview.';});
   on('coverage-open','click',()=>{renderCoverage();$('coverage-dialog').showModal();});
   on('coverage-list','click',e=>{const id=e.target.closest('[data-station]')?.dataset.station;if(id){$('coverage-dialog').close();pickStation(id);}});
+  on('share-link','click',async()=>{
+    if(!scenario.legs.length)throw Error('Create an itinerary first.');
+    const url=location.origin+location.pathname+SHARE+await encodeShare(shareable());
+    const detail=`View-only link (${Math.round(url.length/1000)} k characters). Anyone opening it sees this itinerary and its times; Google street paths are shown as straight lines.`;
+    try{await navigator.clipboard.writeText(url);notify('Copied. '+detail);}
+    catch{$('share-url').value=url;$('share-dialog').showModal();$('share-url').select();}
+  });
+  on('viewer-edit','click',()=>{
+    enterViewer(false);history.replaceState(null,'',location.pathname);
+    mutate(()=>{scenario.id=uid();scenario.name+=' · shared copy';});syncInputs();$('save').click();
+    notify('Editable copy saved in this browser; the shared link itself is unchanged.');
+  });
   on('save','click',()=>{const s=saved();s[scenario.id]=serializable();localStorage.setItem(SAVED,JSON.stringify(s));savedList();$('saved-scenarios').value=scenario.id;notify(`Saved “${scenario.name}” in this browser.`);});
   on('duplicate','click',()=>{mutate(()=>{scenario.id=uid();scenario.name+=' · copy';});syncInputs();$('save').click();});
   on('load','click',async()=>{const s=saved()[$('saved-scenarios').value];if(!s)throw Error('Choose a saved scenario first.');await loadScenario(s);notify(`Loaded “${s.name}”.`);});
