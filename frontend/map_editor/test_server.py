@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 from backend.rail_schedule.itinerary import RailNetwork, ROOT
 from unittest.mock import patch
 
-from frontend.map_editor.server import ApiError, decode_polyline, foot_route, handler, kml_document, network_kml
+from frontend.map_editor.server import JSON_MIME, ApiError, decode_polyline, foot_route, handler, kml_document, network_kml, post_response
 
 
 class EditorServerTests(unittest.TestCase):
@@ -50,6 +50,16 @@ class EditorServerTests(unittest.TestCase):
         reference = ET.fromstring(network_kml(self.n))
         self.assertEqual(len(reference.findall('.//k:Point', ns)), len(self.n.stations))
         self.assertEqual(len(self.n.rail_stations), 125)
+
+    def test_analyze_endpoint_reports_backtracking_for_a_scenario(self):
+        ride = self.n.options('place-alfcl', 'place-brntn', '2026-10-22', 'Red')['options'][0]['legs']
+        back = self.n.options('place-brntn', 'place-jfk', '2026-10-22', 'Red', '09:30')['options'][0]['legs']
+        status, mime, body, _ = post_response(self.n, '/api/analyze', json.dumps({'date': '2026-10-22', 'time': '08:00', 'legs': ride + back}).encode())
+        self.assertEqual((status, mime), (200, JSON_MIME))
+        self.assertEqual(len(body['stretches']), 1)
+        self.assertEqual((body['stretches'][0]['start'], body['stretches'][0]['end']), ('place-brntn', 'place-jfk'))
+        self.assertEqual(body['backtrack_seconds'], body['stretches'][0]['ride_seconds'])
+        self.assertIn('Backtracking', body['definition'])
 
     def test_server_side_street_routes_need_a_key_and_keep_station_anchors(self):
         self.assertEqual(decode_polyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'), [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]])

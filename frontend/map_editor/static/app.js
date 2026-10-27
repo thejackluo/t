@@ -6,7 +6,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const uid = () => crypto.randomUUID();
 const fmt = s => {if(s===undefined||s===null)return '—';const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return `${String(h%24).padStart(2,'0')}:${String(m).padStart(2,'0')}${h>=24?' +'+Math.floor(h/24)+'d':''}`;};
 const duration = s => {if(s===undefined||s===null)return '—';const m=Math.round(s/60);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
-let data, stations, colors, routeNames={}, map, config, scenario, evaluation=null;
+let data, stations, colors, routeNames={}, map, config, scenario, evaluation=null, analysis=null, analysisSerial=0;
 let choices=[], choice=0, replaceIndex=-1, footIndex=-1, evalSerial=0, optionsSerial=0;
 let undo=[],redo=[],messageTimer,lastAdded=[],viewer=false;
 const CURRENT='t-run-map-current-v1', SAVED='t-run-map-saved-v1';
@@ -85,11 +85,11 @@ function enterViewer(on){
 }
 function saved(){try{return JSON.parse(localStorage.getItem(SAVED)||'{}');}catch{return {};}}
 function savedList(){const s=saved();$('saved-scenarios').innerHTML='<option value="">Choose a saved scenario…</option>'+Object.keys(s).map(k=>`<option value="${esc(k)}">${esc(s[k].name)}</option>`).join('');}
-function mutate(fn){undo.push(clone(scenario));if(undo.length>50)undo.shift();redo=[];fn();evaluation=null;autosave();render();evaluate();}
+function mutate(fn){undo.push(clone(scenario));if(undo.length>50)undo.shift();redo=[];fn();evaluation=null;analysis=null;autosave();render();evaluate();}
 async function evaluate(){
   const serial=++evalSerial;
   $('timing-note').textContent='Evaluating feasible trains and directed platform transfers…';
-  try{const result=await request('/api/evaluate',scenario);if(serial!==evalSerial)return;evaluation=result;scenario.legs=result.legs.map(canonicalLeg);autosave();render();}
+  try{const result=await request('/api/evaluate',scenario);if(serial!==evalSerial)return;evaluation=result;scenario.legs=result.legs.map(canonicalLeg);autosave();render();analyzeBacktracking();}
   catch(error){if(serial!==evalSerial)return;evaluation=null;render();$('timing-note').textContent=error.message;notify(error.message,'error');}
 }
 function setEndpoint(side,id){
@@ -197,9 +197,26 @@ async function suggestStreets(index){
   mutate(()=>{Object.assign(scenario.legs[index],{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});});
   notify(`Street route loaded: ${(route.provider_distance/1000).toFixed(2)} km, Google walking estimate ${duration(route.provider_seconds)}. Session-only; inspect entrances.`);
 }
+async function analyzeBacktracking(){
+  /* Speedrun check: which pieces are ridden twice, and what bus/Silver/rail/run shortcut would skip each repeated stretch. */
+  const serial=++analysisSerial;
+  if(scenario.legs.length<2){analysis=null;renderAnalysis();return;}
+  try{const result=await request('/api/analyze',scenario);if(serial!==analysisSerial)return;analysis=result;}
+  catch(error){if(serial!==analysisSerial)return;analysis=null;}
+  renderAnalysis();renderMap();
+}
+function renderAnalysis(){
+  const box=$('backtracking');
+  if(!analysis||!scenario.legs.length){box.hidden=true;return;}
+  box.hidden=false;
+  const pct=Math.round(analysis.backtrack_share*100);
+  $('backtrack-total').textContent=analysis.backtrack_seconds?`${duration(analysis.backtrack_seconds)} re-ridden · ${pct}% of moving time`:'No backtracking';
+  $('backtrack-summary').textContent=analysis.backtrack_seconds?`${analysis.stretches.length} repeated stretch${analysis.stretches.length===1?'':'es'} · ${analysis.repeated_station_visits} repeated station visits${analysis.potential_saving_seconds?` · shortcuts below could save about ${duration(analysis.potential_saving_seconds)}`:' · no faster bus, Silver, rail or run shortcut found for these stretches'}. Any piece ridden again after it was already traversed counts; shortcut times use the timetable from the moment you leave the stretch start.`:'Every piece of this plan covers new ground.';
+  $('backtrack-list').innerHTML=analysis.stretches.map(s=>`<article class="stretch"><strong>Leg${s.legs.length===1?'':'s'} ${s.legs.join(', ')}: ${esc(name(s.start))} → ${esc(name(s.end))}</strong><small>${s.stations.length-1} piece${s.stations.length===2?'':'s'} re-ridden · ${s.estimated?'~':''}${duration(s.elapsed_seconds)} from leaving ${esc(name(s.start))} to reaching ${esc(name(s.end))}${s.leaves!==undefined&&s.leaves!==null?` (${fmt(s.leaves)} → ${fmt(s.arrives)})`:''}</small>${s.shortcuts.length?`<div class="shortcuts">${s.shortcuts.map(x=>`<button class="shortcut" data-from="${esc(s.start)}" data-to="${esc(s.end)}" data-mode="${x.kind==='bus'?'bus':x.kind==='run'?'run':'ride'}" title="${esc(x.note||'')}"><b>Saves ${duration(x.saves_seconds)}</b> · ${esc(x.kind==='run'?x.label:(x.kind==='bus'?'Bus ':x.kind==='silver'?'Silver ':'')+x.label)} · ${x.time_kind==='estimated'?'~':''}${duration(x.seconds)}${x.via?.length?` via ${esc(x.via.join(', '))}`:''}${x.wait_seconds?`<small>incl. ${duration(x.wait_seconds)} wait</small>`:''}${x.then?`<small>then ride ${esc(name(x.then.from))} → ${esc(name(x.then.to))} in reverse (${duration(x.then.seconds)})</small>`:''}</button>`).join('')}</div>`:'<small>No faster shortcut found; try an earlier/later time or a different order.</small>'}</article>`).join('');
+}
 function renderMap(){
   if(!map)return;
-  map.setState({legs:scenario.legs,preview:choices[choice]?.legs||[],covered:new Set(evaluation?.covered||[]),evaluated:evaluation?.legs||[],
+  map.setState({legs:scenario.legs,preview:choices[choice]?.legs||[],covered:new Set(evaluation?.covered||[]),evaluated:evaluation?.legs||[],backtracked:new Set((analysis?.repeated_pieces||[]).map(p=>`${p.leg}:${p.segment}`)),
     from:$('from-station').value,to:$('to-station').value,edit:footIndex});
   $('map-instruction').textContent=footIndex>=0?'Edit foot path: click to add a waypoint; drag purple handles':!$('from-station').value?'Click a starting station':!$('to-station').value?`From ${name($('from-station').value)} → choose your next station`:'Preview a path, then add it to your itinerary';
 }
@@ -338,6 +355,7 @@ async function boot(){
   });
   on('forget-key','click',()=>{storedKey(null);$('google-feedback').textContent='Saved key removed from this browser. Reload to return to the track preview.';});
   on('coverage-open','click',()=>{renderCoverage();$('coverage-dialog').showModal();});
+  on('backtrack-list','click',e=>{const b=e.target.closest('.shortcut');if(!b)return;const radio=document.querySelector(`[name=mode][value=${b.dataset.mode}]`);if(radio){radio.checked=true;$('find-routes').textContent=previewLabel();}replaceIndex=-1;footIndex=-1;setEndpoint('from',b.dataset.from);setEndpoint('to',b.dataset.to);return findPaths();});
   on('coverage-list','click',e=>{const id=e.target.closest('[data-station]')?.dataset.station;if(id){$('coverage-dialog').close();pickStation(id);}});
   on('share-link','click',async()=>{
     if(!scenario.legs.length)throw Error('Create an itinerary first.');

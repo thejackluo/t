@@ -1,5 +1,6 @@
 """Semantic integration tests over the pinned feed; no network or Google key needed."""
 import json
+import math
 import unittest
 from collections import defaultdict
 from unittest.mock import patch
@@ -325,3 +326,49 @@ class BusConnectorTests(unittest.TestCase):
         meta = self.n.metadata()
         self.assertTrue(all(l['route'] in COLORS for l in meta['lines']))  # Base map shows rail/Silver tracks only.
         self.assertIn('1', {r['id'] for r in meta['bus']['routes']})
+
+
+class BacktrackingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.n = RailNetwork()
+
+    def legs(self, a, b, route, time):
+        return self.n.options(a, b, '2026-10-22', route, time)['options'][0]['legs']
+
+    def test_single_ride_has_no_backtracking(self):
+        from backend.rail_schedule.backtracking import analyze
+        report = analyze(self.n, {'date': '2026-10-22', 'time': '08:00', 'legs': self.legs('place-alfcl', 'place-brntn', 'Red', '08:00')})
+        self.assertEqual((report['backtrack_seconds'], report['stretches'], report['repeated_pieces']), (0, [], []))
+        self.assertGreater(report['moving_seconds'], 0)
+
+    def test_repeated_track_forms_stretches_with_shortcuts(self):
+        from backend.rail_schedule.backtracking import analyze
+        legs = (self.legs('place-alfcl', 'place-jfk', 'Red', '07:00') + self.legs('place-jfk', 'place-ogmnl', '', '07:40')
+                + self.legs('place-ogmnl', 'place-forhl', 'Orange', '08:30') + self.legs('place-forhl', 'place-asmnl', '', '09:30'))
+        report = analyze(self.n, {'date': '2026-10-22', 'time': '07:00', 'legs': legs})
+        self.assertGreater(report['backtrack_share'], 0.3)
+        self.assertEqual(report['backtrack_seconds'], sum(s['ride_seconds'] for s in report['stretches']))
+        self.assertTrue(all('leg' in p and 'segment' in p for p in report['repeated_pieces']))
+        last = report['stretches'][-1]
+        self.assertEqual((last['start'], last['end']), ('place-forhl', 'place-jfk'))  # Orange back to the trunk, Red back to JFK.
+        self.assertEqual(last['reverse']['target'], 'place-asmnl')  # JFK → Ashmont is new ground that can be ridden backwards.
+        bus = next(x for x in last['shortcuts'] if x['kind'] == 'bus')
+        self.assertEqual((bus['label'], bus['target'], bus['then']['from'], bus['then']['to']), ('21', 'place-asmnl', 'place-asmnl', 'place-jfk'))
+        self.assertGreater(bus['saves_seconds'], 0)
+        self.assertEqual(bus['seconds'] + bus['then']['seconds'] + bus['saves_seconds'], last['reverse']['arrives'] - last['leaves'])
+        self.assertEqual(report['potential_saving_seconds'], sum(s['best_saving_seconds'] for s in report['stretches']))
+
+    def test_run_shortcut_is_a_labelled_straight_line_estimate(self):
+        from backend.rail_schedule.backtracking import analyze, RUN_DETOUR
+        legs = (self.legs('place-alfcl', 'place-pktrm', 'Red', '08:00') + self.legs('place-pktrm', 'place-mdftf', 'Green-E', '08:30')
+                + self.legs('place-mdftf', 'place-pktrm', 'Green-E', '09:00') + self.legs('place-pktrm', 'place-alfcl', 'Red', '09:30'))
+        report = analyze(self.n, {'date': '2026-10-22', 'time': '08:00', 'legs': legs, 'assumptions': {'run_pace': 5}})
+        stretch = report['stretches'][0]
+        self.assertEqual((stretch['start'], stretch['end'], stretch['legs']), ('place-mdftf', 'place-alfcl', [3, 4]))
+        run = next(x for x in stretch['shortcuts'] if x['kind'] == 'run')
+        meters = distance(self.n.stations['place-mdftf']['point'], self.n.stations['place-alfcl']['point']) * RUN_DETOUR
+        self.assertEqual(run['meters'], round(meters))
+        self.assertEqual(run['seconds'], math.ceil(meters / 1000 * 5 * 60))
+        self.assertEqual(run['time_kind'], 'estimated')
+        self.assertIn('straight-line', run['note'])

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from backend.rail_schedule.itinerary import RailNetwork, COLORS
+from backend.rail_schedule.backtracking import analyze
 
 STATIC = Path(__file__).resolve().parent / 'static'
 MY_MAP = 'https://www.google.com/maps/d/u/0/edit?mid=1uOrMD32-8alM_w2tyQ-Xio6b6jcxRyk'
@@ -181,6 +182,8 @@ def post_response(network, path, raw):
         raise ApiError(400, 'Expected a scenario object.')
     if path == '/api/evaluate':
         return 200, JSON_MIME, network.evaluate(scenario), None
+    if path == '/api/analyze':
+        return 200, JSON_MIME, analyze(network, scenario), None
     if path == '/api/export/kml':
         network.evaluate(scenario)  # Validate modes, sequence, assumptions and payload limits.
         return 200, 'application/vnd.google-earth.kml+xml', kml_document(network, scenario), 't-run-itinerary.kml'

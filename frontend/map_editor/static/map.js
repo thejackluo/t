@@ -215,7 +215,9 @@ export class RouteMap {
       this.svg.append(path(l.geometry,{stroke:foot?'#7952c7':this.colors[l.route],'stroke-width':preview?5:4.5,
         'stroke-dasharray':foot?'6 5':l.kind==='bus'?'1 7':'none',opacity:preview?1:.9}));
       const segments=i>=0?this.state.evaluated[i]?.segments:null;
-      if(segments)segments.forEach((s,k)=>this.svg.append(path(s.geometry,{stroke:'#000',opacity:0,'stroke-width':14,'data-segment':k,'data-leg':i,class:'segment-hit'})));
+      if(segments)segments.forEach((s,k)=>{if(this.state.backtracked?.has(`${i}:${k}`))this.svg.append(path(s.geometry,{stroke:'#c62828','stroke-width':2.2,'stroke-dasharray':'2 4',opacity:.95}));this.svg.append(path(s.geometry,{stroke:'#000',opacity:0,'stroke-width':14,'data-segment':k,'data-leg':i,class:'segment-hit'}));});
+      if(!foot&&!segments&&this.state.backtracked?.has(`${i}:null`))this.svg.append(path(l.geometry,{stroke:'#c62828','stroke-width':2.2,'stroke-dasharray':'2 4'}));
+      if(foot&&this.state.backtracked?.has(`${i}:null`))this.svg.append(path(l.geometry,{stroke:'#c62828','stroke-width':2.2,'stroke-dasharray':'2 4'}));
       if(i>=0){const p=xy(l.geometry[Math.floor(l.geometry.length/2)]);this.svg.append(svgEl('circle',{cx:p[0],cy:p[1],r:9*scale,fill:'#193342',stroke:'white','stroke-width':1.5,'vector-effect':'non-scaling-stroke'}));this.svg.append(svgEl('text',{x:p[0],y:p[1]+3.3*scale,'text-anchor':'middle','font-size':10*scale,fill:'white','font-weight':700,'pointer-events':'none'},String(i+1)));}
     });
     this.data.stations.forEach(s=>{
@@ -323,6 +325,7 @@ export class RouteMap {
       const foot=l.mode!=='ride',editable=foot&&i===this.state.edit;
       const segments=i>=0?this.state.evaluated[i]?.segments:null;
       if(segments)segments.forEach((s,k)=>{
+        if(this.state.backtracked?.has(`${i}:${k}`))add(s.geometry,{strokeColor:'#c62828',strokeOpacity:0,strokeWeight:3,zIndex:4,icons:[{icon:{path:'M 0,-1 0,1',strokeOpacity:1,strokeColor:'#c62828',scale:2},offset:'0',repeat:'8px'}]});
         const hit=add(s.geometry,{strokeColor:'#000',strokeOpacity:0.001,strokeWeight:14,zIndex:5,clickable:true});
         hit.addListener('mousemove',e=>this.showTip(this.segmentTip(i,k),e.domEvent.clientX,e.domEvent.clientY));
         hit.addListener('mouseout',()=>this.hideTip());
