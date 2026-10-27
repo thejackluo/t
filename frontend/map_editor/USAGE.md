@@ -19,11 +19,11 @@ The server reads repository-level `output/manifest.json`, scheduling CSVs, and t
 ## Create a route
 
 1. Choose the service date and platform-ready time. `25:15` means 1:15 AM after the selected service date. Use a date within the imported coverage.
-2. Choose **Ride**, then select endpoints with search/dropdowns, click station handles, or drag from one station to another. Station positions stay fixed.
+2. Choose **Ride**, then select endpoints with search/dropdowns, click station handles, or press on a station **or on its track** and drag along the line: the nearest station snaps under the pointer and the rail path previews live while you drag; release to keep it. Station positions stay fixed.
 3. **Preview rail paths**, inspect alternatives, and **Add selected path to itinerary**. Rail paths use actual directed MBTA GTFS shapes, including intermediate stops. They do not use road directions or station-to-station chords.
 4. Extend the current endpoint. **Replace**, move-up/down, **Delete**, **Undo**, and **Redo** revise the itinerary. Disconnected changes block subsequent timing and coverage until repaired.
 5. For **Run/Walk**, add a foot connection and choose **Edit foot path**. In the preview, click to insert waypoints and drag interior purple handles. On Google Maps, use editable polyline handles. Coordinates can also be edited directly. **Reset sketch** returns to a two-point user-owned sketch.
-6. The evaluator chooses feasible trains for the selected pattern and date, preserving branches, platforms, trip/service IDs, stop permissions, intermediate calls, and same-train continuity. Changing an earlier foot path, pace, time, or transfer buffer recomputes downstream boardings.
+6. The evaluator chooses feasible trains for the selected pattern and date, preserving branches, platforms, trip/service IDs, stop permissions, intermediate calls, and same-train continuity. Changing an earlier foot path, pace, time, or transfer buffer recomputes downstream boardings. Hover any station-to-station piece of a rail path on the map to see its scheduled (or estimated) minutes and arrival; the segment card's **Intermediate stops** list shows the same per-stop times. Segments with no scheduled train are marked **estimated**, with the reason in the card.
 7. **Save** stores a named candidate in this browser; **Duplicate** creates a new candidate. JSON import/export is portable and dataset-pinned. CSV exports the evaluated itinerary with original `24+` service times. Scenarios are not written to the repository.
 
 The example button creates **Alewife → Park Street → Kenmore → Fenway**, including a real platform transfer and an outdoor running sketch to edit.
@@ -42,7 +42,7 @@ My Maps does not automatically snap arbitrary hand-drawn lines to subway tracks.
 
 ## Connect the embedded Google Maps canvas
 
-Choose **Connect Google Maps** for a step-by-step Google Cloud setup guide, paste a restricted browser key, and select **Load Google Maps**. The key stays in this browser tab's session storage, including reloads, outside scenario saves/exports. Alternatively configure the environment:
+Choose **Connect Google Maps** for a step-by-step Google Cloud setup guide, paste a restricted browser key, and select **Load Google Maps**. With **Remember on this device** (default) the key is kept in this browser's local storage, so new tabs and reloads reconnect without asking; uncheck it to keep the key for the current tab only, and use **Forget saved key** to remove it. Keys never enter scenario saves/exports. The key's website restriction must include the origin you are actually using; the Help dialog shows the current page origin, e.g. `https://mbta-route-studio.vercel.app/*` for the Vercel deployment. To avoid the prompt entirely, configure the environment (on Vercel: Project → Settings → Environment Variables, then redeploy):
 
 ```sh
 GOOGLE_MAPS_API_KEY="your-browser-key" python3 -m frontend.map_editor.server
