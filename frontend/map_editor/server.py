@@ -132,12 +132,14 @@ def kml_document(network, scenario):
         '. Track paths are source geometry, not evidence of operation. Google-derived foot geometry is omitted.')
     for i, raw in enumerate(scenario.get('legs', [])):
         leg = network.canonical_leg(raw)
-        if leg['geometry_source'] == 'google_routes':
-            continue
+        google = leg['geometry_source'] == 'google_routes'
+        if google:  # Keep the leg and its numbering; replace only the session-only Google geometry with a station-to-station line.
+            leg = {**leg, 'geometry': [network.stations[leg['from']]['point'], network.stations[leg['to']]['point']],
+                   'geometry_source': 'straight_line_sketch'}
         mark = ET.SubElement(doc, 'Placemark')
         a, b = network.stations[leg['from']]['name'], network.stations[leg['to']]['name']
         ET.SubElement(mark, 'name').text = f"{i + 1}. {leg.get('route', leg['mode'].title())}: {a} → {b}"
-        ET.SubElement(mark, 'description').text = f"{leg['geometry_source']}; {leg['from']} → {leg['to']}. " + ('Stops: ' + ', '.join(network.stations[s]['name'] for s in leg['stations']) if leg['mode'] == 'ride' else 'Estimated foot link; inspect street access.')
+        ET.SubElement(mark, 'description').text = f"{leg['geometry_source']}; {leg['from']} → {leg['to']}. " + ('Stops: ' + ', '.join(network.stations[s]['name'] for s in leg['stations']) if leg['mode'] == 'ride' else ('Google street route omitted (session-only); straight line between stations, draw the street path in My Maps. ' if google else '') + 'Estimated foot link; inspect street access.')
         line_style = ET.SubElement(ET.SubElement(mark, 'Style'), 'LineStyle')
         color = COLORS.get(leg.get('route'), '#8056d9').lstrip('#')
         ET.SubElement(line_style, 'color').text = 'ff' + color[4:6] + color[2:4] + color[:2]

@@ -30,17 +30,23 @@ class EditorServerTests(unittest.TestCase):
     def direct(self):
         return self.n.options('place-alfcl', 'place-pktrm', '2026-10-22', 'Red')['options'][0]['legs'][0]
 
-    def test_kml_contains_actual_track_coordinates_and_omits_google_geometry(self):
+    def test_kml_contains_actual_track_coordinates_and_keeps_run_legs_without_google_geometry(self):
         rail = self.direct()
+        a, b = (self.n.stations[s]['point'] for s in ('place-pktrm', 'place-dwnxg'))
         foot = {'mode': 'run', 'from': 'place-pktrm', 'to': 'place-dwnxg',
-                'geometry': [self.n.stations[s]['point'] for s in ('place-pktrm', 'place-dwnxg')],
-                'geometry_source': 'google_routes'}
+                'geometry': [a, [(a[0] + b[0]) / 2 + 0.001, (a[1] + b[1]) / 2], b], 'geometry_source': 'google_routes'}
         parsed = ET.fromstring(kml_document(self.n, self.scenario([rail, foot])))
         ns = {'k': 'http://www.opengis.net/kml/2.2'}
-        self.assertEqual(len(parsed.findall('.//k:Placemark', ns)), 1)
-        coords = parsed.find('.//k:coordinates', ns).text.split()
+        marks = parsed.findall('.//k:Placemark', ns)
+        self.assertEqual(len(marks), 2)
+        coords = marks[0].find('.//k:coordinates', ns).text.split()
         self.assertEqual(len(coords), len(rail['geometry']))
         self.assertTrue(coords[0].startswith(str(rail['geometry'][0][1])))
+        run = marks[1]
+        self.assertTrue(run.find('k:name', ns).text.startswith('2. Run:'))
+        self.assertEqual(run.find('.//k:coordinates', ns).text.split(), [f'{a[1]},{a[0]},0', f'{b[1]},{b[0]},0'])
+        self.assertIn('Google street route omitted', run.find('k:description', ns).text)
+        self.assertNotIn(str(foot['geometry'][1][0]), ET.tostring(parsed, encoding='unicode'))
         reference = ET.fromstring(network_kml(self.n))
         self.assertEqual(len(reference.findall('.//k:Point', ns)), 125)
 

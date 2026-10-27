@@ -54,7 +54,7 @@ Enable **Maps JavaScript API**, configure billing, and allow `http://127.0.0.1:8
 
 Without a key, the clearly labelled **geographic track preview** supports route creation, foot editing, timing, and KML export. It is an own-data geographic view, not Google Maps or a street basemap. Authentication failure returns to that preview. The Google canvas was verified with a user-supplied restricted browser key; pedestrian street suggestions and private My Maps import still need live verification.
 
-Google-derived pedestrian paths remain **session-only**. Autosave/JSON replace them with an explicitly labelled endpoint sketch; KML omits those foot paths. User-drawn foot geometry and MBTA rail geometry are saved/exported. Inspect pedestrian suggestions for entrances, crossings, and access: a station center is not a verified entrance.
+Google-derived pedestrian paths remain **session-only**. Autosave/JSON replace them with an explicitly labelled endpoint sketch; KML keeps every run/walk leg (numbering stays intact) but exports Google-routed ones as a straight station-to-station line whose description says the street route was omitted, so draw that street path in My Maps. User-drawn foot geometry and MBTA rail geometry are saved/exported. Inspect pedestrian suggestions for entrances, crossings, and access: a station center is not a verified entrance.
 
 ## Timing, coverage, and current boundaries
 
