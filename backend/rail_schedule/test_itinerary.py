@@ -383,3 +383,36 @@ class BacktrackingTests(unittest.TestCase):
         self.assertEqual(run['seconds'], math.ceil(meters / 1000 * 5 * 60))
         self.assertEqual(run['time_kind'], 'estimated')
         self.assertIn('straight-line', run['note'])
+
+    def test_shortcuts_are_priced_with_the_scenario_assumptions(self):
+        from backend.rail_schedule.backtracking import evaluated
+        two_rides = self.n.options('place-forhl', 'place-asmnl', '2026-10-22', '', '09:30')['options'][0]
+        quick = evaluated(self.n, two_rides, '2026-10-22', 34200, {}, 'ride')
+        slow = evaluated(self.n, two_rides, '2026-10-22', 34200, {'buffer': 1800}, 'ride')
+        # A 30-minute transfer buffer forces a later connecting train.
+        self.assertGreater(slow['wait_seconds'], quick['wait_seconds'])
+        self.assertGreaterEqual(slow['seconds'] - quick['seconds'], 600)
+
+    def test_shortcuts_board_only_after_their_exact_arrival_second(self):
+        from backend.rail_schedule.backtracking import evaluated, stamp
+        self.assertEqual(stamp(34201), '09:30:01')
+        option = self.n.options('place-asmnl', 'place-jfk', '2026-10-22', 'Red', '09:30')['options'][0]
+        exact = evaluated(self.n, option, '2026-10-22', 34201, {}, 'ride')
+        self.assertGreaterEqual(exact['departure'], 34201)
+        early = self.n.evaluate({'date': '2026-10-22', 'time': '09:30', 'legs': option['legs']})['legs'][0]['departure']
+        self.assertTrue(early < 34201 <= exact['departure'] or early == exact['departure'])
+
+    def test_unavailable_leg_separates_repeated_stretches(self):
+        from backend.rail_schedule.backtracking import stretches
+        piece = lambda i, a, b, repeated, gap=False: {'leg': i, 'segment': None if gap else 0, 'from': a, 'to': b, 'kind': 'gap' if gap else 'rail',
+                                                      'seconds': 0 if gap else 120, 'departure': None if gap else 100 * i, 'arrival': None if gap else 100 * i + 60,
+                                                      'time_kind': 'scheduled_estimate', 'repeated': repeated, 'gap': gap}
+        flat = [piece(0, 'A', 'B', False), piece(1, 'B', 'A', True), piece(2, 'A', 'X', False, gap=True), piece(3, 'A', 'B', True)]
+        runs = stretches(flat, {'legs': [{} for _ in flat]})
+        self.assertEqual([(s['start'], s['end'], s['legs']) for s in runs], [('B', 'A', [2]), ('A', 'B', [4])])
+
+    def test_unavailable_rides_are_not_traversed_track(self):
+        from backend.rail_schedule.backtracking import analyze
+        legs = self.legs('place-alfcl', 'place-brntn', 'Red', '08:00') + self.legs('place-brntn', 'place-alfcl', 'Red', '09:30')
+        report = analyze(self.n, {'date': '2026-10-22', 'time': '25:30', 'legs': legs})  # Service has ended: both rides unavailable.
+        self.assertEqual((report['moving_seconds'], report['backtrack_seconds'], report['stretches']), (0, 0, []))
