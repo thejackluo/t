@@ -20,12 +20,21 @@ def edge(a, b):
     return frozenset((a, b))
 
 
+def stamp(seconds):
+    """Exact service time HH:MM:SS so a shortcut is never allowed to board before it actually arrives."""
+    seconds = max(0, int(math.ceil(seconds)))
+    return f'{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}'
+
+
 def pieces(result):
     """Flatten evaluated legs into ordered traversed pieces with timing, marking repeats of an already-ridden edge."""
     seen, out = set(), []
     for i, leg in enumerate(result['legs']):
         if leg['status'] != 'ok':
-            continue  # Blocked or unavailable legs were not actually ridden; estimates must not count as traversed track.
+            # Not actually ridden: no traversed track, but the gap must still separate the repeats on either side.
+            out.append({'leg': i, 'segment': None, 'from': leg['from'], 'to': leg['to'], 'kind': 'gap', 'seconds': 0,
+                        'departure': None, 'arrival': None, 'time_kind': 'estimated', 'repeated': False, 'gap': True})
+            continue
         if leg['mode'] == 'ride' and leg.get('segments'):
             for k, s in enumerate(leg['segments']):
                 e = edge(s['from'], s['to'])
@@ -64,17 +73,23 @@ def stretches(flat, result):
         # New ground that immediately follows the stretch: a shortcut may instead jump to its far end and ride it in reverse.
         follow = []
         for piece in flat[s['pieces'][-1] + 1:]:
-            if piece['repeated'] or piece['kind'] not in ('rail', 'silver'):
+            if piece['repeated'] or piece.get('gap') or piece['kind'] not in ('rail', 'silver'):
                 break
             follow.append(piece)
         if follow and follow[-1]['to'] not in (s['start'], s['end']) and follow[-1]['arrival'] is not None:
             s['reverse'] = {'target': follow[-1]['to'], 'arrives': follow[-1]['arrival'], 'legs': sorted({p['leg'] + 1 for p in follow})}
         s['ride_seconds'] = sum(flat[i]['seconds'] for i in s['pieces'])
-        leaves = first['departure']
+        leaves, arrives = first['departure'], last['arrival']
         if leaves is None:  # Estimated ride: fall back to the previous piece's arrival or the leg's start.
             before = flat[s['pieces'][0] - 1] if s['pieces'][0] else None
             leaves = (before or {}).get('arrival') or result['legs'][first['leg']].get('start_time')
-        arrives = last['arrival']
+        if leaves is None or arrives is None:
+            s['leaves'] = s['arrives'] = None
+            s['elapsed_seconds'] = s['ride_seconds']
+            s['stations'] = [first['from']] + [flat[i]['to'] for i in s['pieces']]
+            s['estimated'] = True
+            s['legs'] = [l + 1 for l in s['legs']]
+            continue
         s['leaves'] = leaves
         s['arrives'] = arrives
         s['elapsed_seconds'] = (arrives - leaves) if leaves is not None and arrives is not None else s['ride_seconds']
@@ -104,39 +119,62 @@ def shortcuts(network, stretch, day, assumptions):
     return found[:MAX_SUGGESTIONS]
 
 
-def evaluated(network, option, day, ready, assumptions, kind):
-    """Time an alternative with the scenario's own assumptions from a given service time; None when infeasible."""
+def evaluated(network, option, day, ready, assumptions, kind, legs=None):
+    """Time an alternative with the scenario's own assumptions from an exact service time; None when infeasible.
+
+    `legs` may chain extra legs after the option (e.g. the reverse ride) so transfers between them are priced.
+    """
+    legs = legs if legs is not None else option['legs']
     try:
-        res = network.evaluate({'date': day, 'time': clock(max(0, ready)), 'legs': option['legs'], 'assumptions': assumptions})
+        res = network.evaluate({'date': day, 'time': stamp(ready), 'legs': legs, 'assumptions': assumptions})
     except ValueError:
         return None
     if res['status'] != 'ok':
         return None
-    legs = res['legs']
+    done = res['legs']
     return {'kind': kind, 'label': option['label'], 'legs': option['legs'], 'seconds': res['summary']['elapsed'],
-            'departure': legs[0].get('departure'), 'arrival': legs[-1].get('arrival'),
-            'wait_seconds': sum(l.get('wait_seconds', 0) + l.get('transfer_seconds', 0) for l in legs),
+            'departure': done[0].get('departure'), 'arrival': done[-1].get('arrival'), 'evaluated_legs': done,
+            'wait_seconds': sum(l.get('wait_seconds', 0) + l.get('transfer_seconds', 0) for l in done),
             'time_kind': 'scheduled_estimate', 'via': [network.stations[l['to']]['name'] for l in option['legs'][:-1]]}
 
 
-def reverse_ride(network, c, b, ready, day, assumptions):
-    """An actual C → B rail/Silver path boardable after reaching C; the forward ride's duration is never reused."""
+def reverse_ride(network, item, c, b, leaves, day, assumptions):
+    """An actual C → B rail/Silver path boardable after the shortcut reaches C, with the connection priced.
+
+    Bus/rail shortcuts are chained in front of the reverse ride so the evaluator charges the real transfer (bus stop →
+    platform walk, buffer); a run arrives outdoors, so the scenario's station access time applies before boarding.
+    """
+    if item['kind'] == 'run':
+        ready = leaves + item['seconds'] + float(assumptions.get('access', 60))
+    else:
+        ready = item['arrival']
     try:
-        options = network.options(c, b, day, '', clock(max(0, ready)), mode='rail')['options']
+        options = network.options(c, b, day, '', stamp(ready), mode='rail')['options']
     except ValueError:
         return None
     best = None
     for option in options[:3]:
-        item = evaluated(network, option, day, ready, assumptions, 'ride')
-        if item and (best is None or item['seconds'] < best['seconds']):
-            best = item
+        if item['kind'] == 'run':
+            back = evaluated(network, option, day, ready, assumptions, 'ride')
+            if back:
+                back['transfer_seconds'] = float(assumptions.get('access', 60))
+        else:
+            chained = evaluated(network, option, day, leaves, assumptions, 'ride', legs=item['legs'] + option['legs'])
+            if not chained:
+                continue
+            mine = chained['evaluated_legs'][len(item['legs']):]
+            back = {'label': option['label'], 'departure': mine[0]['departure'], 'arrival': mine[-1]['arrival'],
+                    'seconds': mine[-1]['arrival'] - item['arrival'], 'transfer_seconds': mine[0].get('transfer_seconds', 0),
+                    'wait_seconds': sum(l.get('wait_seconds', 0) + l.get('transfer_seconds', 0) for l in mine)}
+        if back and (best is None or back['seconds'] < best['seconds']):
+            best = back
     return best
 
 
 def candidates(network, stretch, b, budget, reverse, day, assumptions):
     a, leaves = stretch['start'], stretch['leaves']
     run_pace = float(assumptions.get('run_pace', 6))
-    ready = clock(max(0, leaves))
+    ready = stamp(leaves)
     ridden = {edge(x, y) for x, y in zip(stretch['stations'], stretch['stations'][1:])}
     found = []
 
@@ -161,16 +199,17 @@ def candidates(network, stretch, b, budget, reverse, day, assumptions):
                       'note': f'straight-line ×{RUN_DETOUR} estimate at {run_pace:g} min/km; preview Run for the street route'})
     priced = []
     for item in found:
+        item.pop('evaluated_legs', None)
         item['target'] = b
         item['saves_seconds'] = budget - item['seconds']
         if reverse:
             # Riding C → B backwards needs a real train after the shortcut arrives; the forward duration is not reused.
-            back = reverse_ride(network, b, stretch['end'], leaves + item['seconds'], day, assumptions)
+            back = reverse_ride(network, item, b, stretch['end'], leaves, day, assumptions)
             if not back:
                 continue
             item['then'] = {'from': b, 'to': stretch['end'], 'seconds': back['seconds'], 'label': back['label'],
                             'departure': back['departure'], 'arrival': back['arrival'], 'wait_seconds': back['wait_seconds'],
-                            'replaces_legs': reverse['legs']}
+                            'transfer_seconds': back['transfer_seconds'], 'replaces_legs': reverse['legs']}
             item['saves_seconds'] -= back['seconds']
         priced.append(item)
     return priced
@@ -184,13 +223,14 @@ def analyze(network, scenario):
     for s in runs:
         s['shortcuts'] = shortcuts(network, s, str(scenario.get('date', '')), assumptions)
         s['best_saving_seconds'] = s['shortcuts'][0]['saves_seconds'] if s['shortcuts'] else 0
-    moving = sum(p['seconds'] for p in flat)
-    repeated = sum(p['seconds'] for p in flat if p['repeated'])
+    ridden = [p for p in flat if not p.get('gap')]
+    moving = sum(p['seconds'] for p in ridden)
+    repeated = sum(p['seconds'] for p in ridden if p['repeated'])
     visits = {}
-    for p in flat:
+    for p in ridden:
         visits[p['to']] = visits.get(p['to'], 0) + 1
-    if flat:
-        visits[flat[0]['from']] = visits.get(flat[0]['from'], 0) + 1
+    if ridden:
+        visits[ridden[0]['from']] = visits.get(ridden[0]['from'], 0) + 1
     return {'moving_seconds': moving, 'backtrack_seconds': repeated,
             'backtrack_share': round(repeated / moving, 3) if moving else 0,
             'repeated_pieces': [{'leg': p['leg'], 'segment': p['segment']} for p in flat if p['repeated']],
