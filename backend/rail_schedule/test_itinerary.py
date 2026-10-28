@@ -51,9 +51,11 @@ class ItineraryTests(unittest.TestCase):
         self.assertEqual(result['summary']['record_proxy_seconds'], result['summary']['ride'])
 
     def test_cross_line_paths_are_expanded_into_actual_rides_and_transfers(self):
-        path = self.n.options('place-alfcl', 'place-aport', '2026-10-22')['options'][0]
+        options = self.n.options('place-alfcl', 'place-aport', '2026-10-22')['options']
+        self.assertEqual(options[0]['legs'][0]['route'], 'Red')
+        self.assertIn(options[0]['legs'][-1]['route'], ('Blue', '743'))  # SL3 from South Station is a legitimate 2-leg path.
+        path = next(o for o in options if all(leg['kind'] == 'rail' for leg in o['legs']))
         self.assertGreaterEqual(len(path['legs']), 3)
-        self.assertEqual(path['legs'][0]['route'], 'Red')
         self.assertEqual(path['legs'][-1]['route'], 'Blue')
         result = self.n.evaluate(self.scenario(path['legs']))
         self.assertEqual(result['status'], 'ok')
@@ -242,3 +244,34 @@ class ItineraryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SilverLineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.n = RailNetwork()
+
+    def test_silver_rides_are_scheduled_and_counted_separately_from_rail(self):
+        self.assertEqual(len(self.n.rail_stations), 125)
+        self.assertEqual(self.n.stations['place-chels']['kind'], 'silver')
+        self.assertEqual(self.n.stations['silver-terminal-a']['kind'], 'silver')
+        self.assertEqual(self.n.parent('17091'), 'silver-terminal-a')
+        option = self.n.options('place-sstat', 'place-chels', '2026-10-22', '743')['options'][0]
+        leg = option['legs'][0]
+        self.assertEqual((leg['route'], leg['route_name'], leg['kind']), ('743', 'SL3', 'silver'))
+        self.assertEqual(leg['stations'][:2], ['place-sstat', 'place-crtst'])
+        result = self.n.evaluate({'date': '2026-10-22', 'time': '08:00', 'legs': [leg]})
+        self.assertEqual(result['legs'][0]['status'], 'ok')
+        self.assertEqual(result['legs'][0]['time_kind'], 'scheduled_estimate')
+        self.assertIn('place-chels', result['silver_covered'])
+        self.assertNotIn('place-chels', result['covered'])
+        self.assertEqual(result['covered'], ['place-aport', 'place-sstat'])
+        self.assertEqual(len(result['missing']) + len(result['covered']), 125)
+        self.assertEqual(len(result['silver_missing']) + len(result['silver_covered']), len(self.n.stations) - 125)
+        meta = self.n.metadata()
+        self.assertEqual(meta['rail_station_count'], 125)
+        self.assertIn({'id': '743', 'name': 'SL3', 'color': '#7C878E', 'kind': 'silver'}, meta['routes'])
+
+    def test_rail_only_filter_still_excludes_silver(self):
+        for option in self.n.options('place-sstat', 'place-aport', '2026-10-22', 'Red')['options']:
+            self.assertTrue(all(leg['kind'] == 'rail' for leg in option['legs']))

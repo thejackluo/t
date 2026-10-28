@@ -70,7 +70,7 @@ These work packages define the delivery and verification checklist for ongoing i
 
 ## Later work and record scope
 
-- **Silver Line:** required by the supplied rules for the full attempt; implementation comes after the rail foundation. Rail-only results must be labelled **rehearsals**.
+- **Silver Line:** required by the supplied rules for the full attempt. SL1–SL5/SLW are built into the schedule and ride like any line, with Silver coverage tracked separately from the 125 rail stations because the Silver visit rule still awaits clarification. Rail-only results must be labelled **rehearsals**.
 - **Optimization:** search for better routes after the same evaluator can validate a manual baseline.
 - **Attempt day:** offline instructions, observations/evidence logging, and optional live predictions.
 
