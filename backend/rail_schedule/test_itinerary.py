@@ -4,7 +4,7 @@ import unittest
 from collections import defaultdict
 from unittest.mock import patch
 
-from backend.rail_schedule.itinerary import RailNetwork, ROOT, distance, service_seconds
+from backend.rail_schedule.itinerary import COLORS, RailNetwork, ROOT, distance, service_seconds
 from backend.rail_schedule.schedule_lookup import lookup
 
 
@@ -275,3 +275,53 @@ class SilverLineTests(unittest.TestCase):
     def test_rail_only_filter_still_excludes_silver(self):
         for option in self.n.options('place-sstat', 'place-aport', '2026-10-22', 'Red')['options']:
             self.assertTrue(all(leg['kind'] == 'rail' for leg in option['legs']))
+
+
+class BusConnectorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.n = RailNetwork()
+
+    def test_direct_buses_are_scheduled_connectors_that_never_earn_coverage(self):
+        self.assertTrue(self.n.bus['routes'])
+        self.assertNotIn('741', self.n.bus['routes'])  # Silver is its own kind, shuttles are excluded.
+        self.assertFalse(any(r.startswith('Shuttle') for r in self.n.bus['routes']))
+        bus = self.n.options('place-forhl', 'place-asmnl', '2026-10-22', '', '08:00', mode='bus')['options'][0]['legs'][0]
+        self.assertEqual((bus['route'], bus['kind'], bus['from'], bus['to']), ('21', 'bus', 'place-forhl', 'place-asmnl'))
+        self.assertIn(bus['from_stop'], self.n.bus_stops)
+        rail = self.n.options('place-rugg', 'place-forhl', '2026-10-22', 'Orange', '08:00')['options'][0]['legs']
+        red = self.n.options('place-asmnl', 'place-jfk', '2026-10-22', 'Red', '09:00')['options'][0]['legs']
+        result = self.n.evaluate({'date': '2026-10-22', 'time': '08:00', 'legs': rail + [bus] + red})
+        self.assertEqual(result['status'], 'ok')
+        legs = result['legs']
+        self.assertEqual([l['kind'] for l in legs], ['rail', 'bus', 'rail'])
+        self.assertEqual(legs[1]['time_kind'], 'scheduled_estimate')
+        self.assertGreaterEqual(legs[1]['departure'], legs[0]['arrival'] + legs[1]['transfer_seconds'])
+        self.assertEqual(result['summary']['bus'], legs[1]['travel_seconds'])
+        intermediate = set(bus['stations']) - {'place-forhl', 'place-asmnl'}
+        self.assertFalse(intermediate & set(result['covered']))
+        self.assertIn('place-forhl', result['covered'])
+        self.assertIn('place-asmnl', result['covered'])  # Reached by rail legs, not by the bus.
+
+    def test_rail_search_ignores_buses_and_bus_search_is_direct_only(self):
+        for option in self.n.options('place-harsq', 'place-nubn', '2026-10-22', '', '09:00')['options']:
+            self.assertTrue(all(leg['kind'] != 'bus' for leg in option['legs']))
+        buses = self.n.options('place-harsq', 'place-nubn', '2026-10-22', '', '09:00', mode='bus')['options']
+        self.assertTrue(buses and all(len(o['legs']) == 1 and o['legs'][0]['kind'] == 'bus' for o in buses))
+        self.assertEqual(buses[0]['label'], '1')
+        none = self.n.options('place-alfcl', 'place-wondl', '2026-10-22', '', '09:00', mode='bus')
+        self.assertEqual(none['options'], [])
+        self.assertIn('No direct scheduled MBTA bus', none['message'])
+        with self.assertRaises(ValueError):
+            self.n.options('place-harsq', 'place-nubn', '2026-10-22', '', '09:00', mode='taxi')
+
+    def test_bus_stop_walks_are_estimated_when_gtfs_publishes_no_transfer(self):
+        stop = next(s for s, r in self.n.bus_stops.items() if r['Source'] == 'proximity' and r['Station ID'] == 'place-harsq')
+        walk = self.n.bus_transfer('70068', stop, 30)
+        self.assertTrue(walk['estimated'] and walk['street_level'])
+        self.assertEqual(walk['bus_stop'], stop)
+        self.assertGreater(walk['seconds'], 30)
+        self.assertIn('no GTFS transfer published', walk['source'])
+        meta = self.n.metadata()
+        self.assertTrue(all(l['route'] in COLORS for l in meta['lines']))  # Base map shows rail/Silver tracks only.
+        self.assertIn('1', {r['id'] for r in meta['bus']['routes']})

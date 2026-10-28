@@ -213,7 +213,7 @@ export class RouteMap {
       const foot=l.mode!=='ride';
       this.svg.append(path(l.geometry,{stroke:'#fff','stroke-width':preview?9:8,opacity:.95}));
       this.svg.append(path(l.geometry,{stroke:foot?'#7952c7':this.colors[l.route],'stroke-width':preview?5:4.5,
-        'stroke-dasharray':foot?'6 5':'none',opacity:preview?1:.9}));
+        'stroke-dasharray':foot?'6 5':l.kind==='bus'?'1 7':'none',opacity:preview?1:.9}));
       const segments=i>=0?this.state.evaluated[i]?.segments:null;
       if(segments)segments.forEach((s,k)=>this.svg.append(path(s.geometry,{stroke:'#000',opacity:0,'stroke-width':14,'data-segment':k,'data-leg':i,class:'segment-hit'})));
       if(i>=0){const p=xy(l.geometry[Math.floor(l.geometry.length/2)]);this.svg.append(svgEl('circle',{cx:p[0],cy:p[1],r:9*scale,fill:'#193342',stroke:'white','stroke-width':1.5,'vector-effect':'non-scaling-stroke'}));this.svg.append(svgEl('text',{x:p[0],y:p[1]+3.3*scale,'text-anchor':'middle','font-size':10*scale,fill:'white','font-weight':700,'pointer-events':'none'},String(i+1)));}

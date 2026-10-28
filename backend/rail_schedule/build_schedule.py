@@ -19,7 +19,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import xlsxwriter
+try:
+    import xlsxwriter
+except ImportError:  # Only the workbook writer needs it; build_bus imports the helpers.
+    xlsxwriter = None
 
 if __package__:
     from .paths import ROOT

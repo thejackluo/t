@@ -68,13 +68,25 @@ class RailNetwork:
         self.rail_stations = {s for s, r in self.stations.items() if r['kind'] == 'rail'}
         self.calendar = {(r['Service date'], r['Route']): r for r in self.rows('service_calendar')}
         trips = defaultdict(list)
-        for r in self.rows('departures'):
-            trips[(r['Profile ID'], r['Trip ID'])].append({
-                'station': r['Station ID'], 'stop': r['Platform stop ID'], 'sequence': int(r['Stop sequence']),
-                'arrival': service_seconds(r['Arrival service time']), 'departure': int(r['Departure service seconds']),
-                'board': r['Can board'] == '1', 'alight': r['Can alight'] == '1', 'timepoint': r['Timepoint'],
-                'route': r['Route'], 'direction': r['Direction ID'], 'headsign': r['Destination'],
-                'service': r['Service ID']})
+        def load(name):
+            for r in self.rows(name):
+                trips[(r['Profile ID'], r['Trip ID'])].append({
+                    'station': r['Station ID'], 'stop': r['Platform stop ID'], 'sequence': int(r['Stop sequence']),
+                    'arrival': service_seconds(r['Arrival service time']), 'departure': int(r['Departure service seconds']),
+                    'board': r['Can board'] == '1', 'alight': r['Can alight'] == '1', 'timepoint': r['Timepoint'],
+                    'route': r['Route'], 'direction': r['Direction ID'], 'headsign': r['Destination'],
+                    'service': r['Service ID']})
+        load('departures')
+        # Scheduled bus connectors (build_bus.py) are optional: same table shapes, bus stops mapped to the station they serve.
+        self.bus, self.bus_stops = {'routes': {}}, {}
+        if (self.directory / 'bus_manifest.json').exists():
+            self.bus = json.loads((self.directory / 'bus_manifest.json').read_text())
+            if self.bus.get('sha256') != self.manifest['sha256']:
+                raise ValueError('Bus export does not match the schedule manifest.')
+            self.calendar.update({(r['Service date'], r['Route']): r for r in self.rows('bus_calendar')})
+            self.bus_stops = {r['Stop ID']: r for r in self.rows('bus_stops')}
+            self.station_of.update({stop: r['Station ID'] for stop, r in self.bus_stops.items()})
+            load('bus_departures')
         wanted = {t for _, t in trips}
         self.stops, self.trip_meta, shapes = {}, {}, defaultdict(list)
         self.transfer_rules = defaultdict(list)
@@ -121,7 +133,7 @@ class RailNetwork:
             if pid not in self.patterns:
                 shape = shapes[meta['shape_id']]
                 positions = self.shape_positions(shape, calls)
-                self.patterns[pid] = {'id': pid, 'route': meta['route_id'], 'direction': meta['direction_id'],
+                self.patterns[pid] = {'id': pid, 'route': meta['route_id'], 'direction': meta['direction_id'], 'kind': self.kind_of(meta['route_id']),
                     'shape_id': meta['shape_id'], 'shape': shape, 'positions': positions, 'calls': calls,
                     'headsign': calls[0]['headsign'], 'profiles': set()}
                 for i, c in enumerate(calls[:-1]):
@@ -137,6 +149,15 @@ class RailNetwork:
             origin, target = self.parent(a), self.parent(b)
             if origin in self.stations and target in self.stations and origin != target:
                 self.interchanges[origin].add(target)
+
+    def kind_of(self, route):
+        return 'bus' if route in self.bus['routes'] else 'silver' if route in SILVER else 'rail'
+
+    def route_name(self, route):
+        return self.bus['routes'][route]['short_name'] if route in self.bus['routes'] else route_name(route)
+
+    def route_color(self, route):
+        return self.bus['routes'][route]['color'] if route in self.bus['routes'] else COLORS[route]
 
     def rows(self, name):
         with gzip.open(self.directory / f'{name}.csv.gz', 'rt', encoding='utf-8', newline='') as f:
@@ -247,7 +268,7 @@ class RailNetwork:
             raise ValueError('Boarding or alighting is not allowed at this endpoint.')
         geometry = self.geometry(p, start, end)
         return {'mode': 'ride', 'pattern': pid, 'start': start, 'end': end, 'route': p['route'],
-                'route_name': route_name(p['route']), 'kind': 'silver' if p['route'] in SILVER else 'rail', 'direction': p['direction'], 'headsign': p['headsign'], 'shape_id': p['shape_id'],
+                'route_name': self.route_name(p['route']), 'kind': p['kind'], 'direction': p['direction'], 'headsign': p['headsign'], 'shape_id': p['shape_id'],
                 'from': calls[0]['station'], 'to': calls[-1]['station'], 'from_stop': calls[0]['stop'],
                 'to_stop': calls[-1]['stop'], 'stations': [c['station'] for c in calls], 'geometry': geometry,
                 'geometry_source': 'MBTA GTFS shapes.txt', 'distance': round(sum(distance(x, y) for x, y in zip(geometry, geometry[1:])))}
@@ -255,7 +276,7 @@ class RailNetwork:
     def metadata(self):
         seen, lines = set(), []
         for p in self.patterns.values():
-            if p['shape_id'] in seen:
+            if p['shape_id'] in seen or p['kind'] == 'bus':  # Buses are connectors; the base map shows rail/Silver tracks only.
                 continue
             seen.add(p['shape_id'])
             lines.append({'route': p['route'], 'shape_id': p['shape_id'],
@@ -264,6 +285,9 @@ class RailNetwork:
                 'routes': [{'id': r, 'name': route_name(r), 'color': COLORS[r], 'kind': 'silver' if r in SILVER else 'rail'} for r in self.manifest['routes']],
                 'rail_station_count': len(self.rail_stations), 'silver_station_count': len(self.stations) - len(self.rail_stations),
                 'coverage_label': COVERAGE_LABEL,
+                'bus': {'routes': [{'id': r, 'name': b['short_name'], 'long_name': b['long_name'], 'color': b['color'], 'kind': 'bus'}
+                                   for r, b in sorted(self.bus['routes'].items(), key=lambda x: (len(x[1]['short_name']), x[1]['short_name']))],
+                        'stop_count': self.bus.get('stop_count', 0), 'rule': self.bus.get('coverage_rule', '')},
                 'dates': sorted({d for d, _ in self.calendar}), 'manifest': self.manifest,
                 'ruleset': 'rail-rehearsal-v1', 'pattern_count': len(self.patterns)}
 
@@ -320,6 +344,25 @@ class RailNetwork:
                 'source': f'estimated street-level transfer: exit via {names[0]}, walk about {round(meters)} m outdoors, '
                           f're-enter via {names[1]}; {why}'}
 
+    def bus_transfer(self, origin, destination, buffer):
+        """Explicitly estimated walk between a station platform and a street bus stop when GTFS publishes no transfer.
+
+        Platform → nearest GTFS entrance uses the station's own pathways where they exist; the outdoor part is a
+        straight-line walk at 1.2 m/s to the stop's exported location. Labelled street-level so the plan shows it.
+        """
+        exits = (self.entrance_costs(origin, self.pathways) if origin not in self.bus_stops else {}) or {origin: 0}
+        entries = (self.entrance_costs(destination, self.reverse_pathways) if destination not in self.bus_stops else {}) or {destination: 0}
+        plans = [(out + distance(self.stop_point(a), self.stop_point(b)) / 1.2 + back, a, b, distance(self.stop_point(a), self.stop_point(b)))
+                 for a, out in exits.items() for b, back in entries.items()]
+        seconds, door_out, door_in, meters = min(plans)
+        names = [self.stops[x].get('stop_name', x) for x in (door_out, door_in)]
+        stop = destination if destination in self.bus_stops else origin
+        return {'seconds': math.ceil(seconds + buffer), 'walk_seconds': math.ceil(seconds), 'minimum_seconds': 0,
+                'buffer_seconds': buffer, 'estimated': True, 'fallback': True, 'street_level': True, 'bus_stop': stop,
+                'via': [door_out, door_in], 'via_names': names, 'outdoor_meters': round(meters),
+                'source': f'estimated walk between {names[0]} and bus stop {names[1]} ({round(meters)} m outdoors; '
+                          f"stop linked to the station by {self.bus_stops[stop]['Source'].replace('_', ' ')}); no GTFS transfer published"}
+
     def transfer(self, origin, destination, buffer=0, from_trip=None, to_trip=None, station_change=120):
         """Directed platform constraints; trip-specific GTFS rules remain trip-specific.
 
@@ -334,6 +377,8 @@ class RailNetwork:
         if applicable:
             specificity = max(bool(r['from_trip_id']) + bool(r['to_trip_id']) for r in applicable)
             applicable = [r for r in applicable if bool(r['from_trip_id']) + bool(r['to_trip_id']) == specificity]
+        if (origin in self.bus_stops or destination in self.bus_stops) and (not applicable or any(r['transfer_type'] == '3' for r in applicable)):
+            return self.bus_transfer(origin, destination, buffer)
         if any(r['transfer_type'] == '3' for r in applicable):
             return self.street_transfer(origin, destination, buffer, 'GTFS marks the in-station transfer as not possible')
         path = self.pathway_time(origin, destination)
@@ -351,7 +396,7 @@ class RailNetwork:
                 'walk_seconds': math.ceil(walk), 'minimum_seconds': minimum, 'buffer_seconds': buffer,
                 'source': 'GTFS directed transfers/pathways', 'estimated': path[1] if path else not bool(walk)}
 
-    def options(self, origin, destination, day, route='', time=''):
+    def options(self, origin, destination, day, route='', time='', mode='rail'):
         """Bounded best-first search for plausible rail paths.
 
         Repeated traversal of trunk stations and same-line branch changes are allowed (and penalised in ranking)
@@ -360,8 +405,11 @@ class RailNetwork:
         date.fromisoformat(day)
         if origin not in self.stations or destination not in self.stations or origin == destination:
             raise ValueError('Choose two different MBTA stations.')
-        if route and route not in COLORS:
+        if route and route not in COLORS and route not in self.bus['routes']:
             raise ValueError('Unknown line filter.')
+        if mode not in ('rail', 'bus'):
+            raise ValueError('Unknown search mode.')
+        max_legs = 1 if mode == 'bus' else 4  # Buses are direct connectors between two stations, never chained.
         if not any(d == day for d, _ in self.calendar):
             return {'options': [], 'message': 'This date is outside the imported timetable. Choose a published service date.'}
         ready = service_seconds(time) if time else None
@@ -382,10 +430,10 @@ class RailNetwork:
                                     'revisited_stations': revisits,
                                     'estimated_transfers': any(l.get('transfer_estimated') for l in legs),
                                     'street_transfers': any(l.get('transfer_street_level') for l in legs),
-                                    'label': ' → '.join(route_name(x['route']) for x in legs)})
+                                    'label': ' → '.join(self.route_name(x['route']) for x in legs)})
                     signatures.add(signature)
                 continue
-            if len(legs) >= 4:
+            if len(legs) >= max_legs:
                 continue
             state = (station, previous_stop)
             if len(best[state]) >= 3 and cost > best[state][-1]:
@@ -399,7 +447,7 @@ class RailNetwork:
             entries = []
             for pid, i in (entry for s in boarding_stations for entry in self.starts[s]):
                 p = self.patterns[pid]
-                if route and p['route'] != route:
+                if route and p['route'] != route or (p['kind'] == 'bus') != (mode == 'bus'):
                     continue
                 cal = self.calendar.get((day, p['route']))
                 if not cal or cal['Profile ID'] not in p['profiles']:
@@ -449,6 +497,8 @@ class RailNetwork:
             limit = min(a['approx_minutes'] for a in answers) * 1.4 + 3
             answers = [a for a in answers if a['approx_minutes'] <= limit]
             message = ''
+        elif mode == 'bus':
+            message = f"No direct scheduled MBTA bus connects {self.stations[origin]['name']} and {self.stations[destination]['name']} on {day}; buses are offered only as direct connectors between stations."
         elif ended:
             message = (f"Scheduled rail service from {self.stations[origin]['name']} has ended for {day} by service time {clock(ready)}. "
                        'Choose an earlier platform-ready time or the next service date.')
@@ -571,15 +621,15 @@ class RailNetwork:
                     if not cal:
                         code, why = 'outside_feed', f'{day} is outside the published schedule coverage; no timetable exists for it in this snapshot.'
                     elif not trips:
-                        code, why = 'no_trips_for_profile', f"{p['route']} toward {headsign} has no trips on the {day} timetable along this exact stop pattern. Preview the path again for this date."
+                        code, why = 'no_trips_for_profile', f"{self.route_name(p['route'])} toward {headsign} has no trips on the {day} timetable along this exact stop pattern. Preview the path again for this date."
                     elif too_late and not blocked_transfers:
-                        code, why = 'no_service_remaining', (f"The last scheduled {p['route']} departure from {origin} toward {headsign} on {day} is "
+                        code, why = 'no_service_remaining', (f"The last scheduled {self.route_name(p['route'])} departure from {origin} toward {headsign} on {day} is "
                                                              f"{clock(last_departure)}; you would be ready at {clock(ready)}. Start earlier or use the next service date.")
                     elif blocked_transfers and not too_late:
                         code, why = 'transfer_not_permitted', (f"GTFS does not permit a directed platform transfer from {previous_ride['to_stop']} to {leg['from_stop']} "
                                                                f"at {origin}. Choose a path via another platform or add an explicit foot link.")
                     else:
-                        code, why = 'no_service_remaining', (f"No permitted {p['route']} departure from {origin} toward {headsign} remains on {day} after {clock(ready)} "
+                        code, why = 'no_service_remaining', (f"No permitted {self.route_name(p['route'])} departure from {origin} toward {headsign} remains on {day} after {clock(ready)} "
                                                              f"(last scheduled {clock(last_departure)}; {blocked_transfers} earlier trips also blocked by transfer rules).")
                     # Keep the plan timed: continue downstream with explicitly estimated durations, never invented trips.
                     estimate = self.typical_seconds(p['id'], leg['start'], leg['end']) or 0
@@ -597,7 +647,7 @@ class RailNetwork:
                         events.append({'mode': 'transfer', 'from_stop': previous_ride['to_stop'], 'to_stop': leg['from_stop'],
                                        'from': previous_ride['to'], 'to': leg['from'], 'seconds': change['seconds'],
                                        'time_kind': 'estimated', 'source': change['source']})
-                    events.append({'mode': 'estimated_ride', 'seconds': estimate, 'time_kind': 'estimated', 'reason_code': code})
+                    events.append({'mode': 'estimated_ride', 'seconds': estimate, 'time_kind': 'estimated', 'reason_code': code, 'kind': p['kind']})
                     ready = item['estimated_arrival']
                     previous_ride = item
                 else:
@@ -622,16 +672,18 @@ class RailNetwork:
                                        'seconds': transfer['seconds'], 'time_kind': 'estimated', 'source': transfer['source']})
                     if wait:
                         events.append({'mode': 'wait', 'seconds': wait, 'time_kind': 'scheduled_estimate', 'pre_start': first_board is None})
-                    events.append({'mode': 'ride', 'trip_id': trip['id'], 'seconds': travel, 'time_kind': 'scheduled_estimate'})
+                    events.append({'mode': 'ride', 'trip_id': trip['id'], 'seconds': travel, 'time_kind': 'scheduled_estimate', 'kind': p['kind']})
                     first_board = dep if first_board is None else first_board
                     last_arrival = arrival
                     ready = arrival
-                    covered.update(leg['stations'])  # Split into rail/Silver coverage below.
+                    if p['kind'] != 'bus':  # A scheduled bus is a permitted connector but never earns station coverage.
+                        covered.update(leg['stations'])  # Split into rail/Silver coverage below.
                     previous_ride = item
             result.append(item)
             previous = leg
         totals = {mode: sum(e['seconds'] for e in events if e['mode'] == mode)
                   for mode in ('ride', 'wait', 'transfer', 'access', 'run', 'walk', 'estimated_ride')}
+        totals['bus'] = sum(e['seconds'] for e in events if e['mode'] in ('ride', 'estimated_ride') and e.get('kind') == 'bus')
         unavailable = [i + 1 for i, l in enumerate(result) if l['status'] == 'unavailable']
         silver = covered - self.rail_stations
         covered &= self.rail_stations

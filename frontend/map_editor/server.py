@@ -159,7 +159,7 @@ def get_response(network, path, query):
     if path == '/api/foot-route':
         return 200, JSON_MIME, foot_route(network, query.get('from'), query.get('to')), None
     if path == '/api/options':
-        return 200, JSON_MIME, network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', ''), query.get('time', '')), None
+        return 200, JSON_MIME, network.options(query.get('from'), query.get('to'), query.get('date', ''), query.get('route', ''), query.get('time', ''), query.get('mode', 'rail')), None
     if path == '/api/export/network.kml':
         return 200, 'application/vnd.google-earth.kml+xml', network_kml(network), 'MBTA-rail-tracks.kml'
     if path in ASSETS:

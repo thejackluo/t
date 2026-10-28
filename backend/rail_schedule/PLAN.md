@@ -55,7 +55,7 @@ The backend owns transit identity, connectivity, schedule feasibility, and sourc
 
 ## Deliverable and confirmed scope
 
-The existing workbook covers core rail and all service dates in its published snapshot: **Red, Mattapan, Orange, Blue, Green-B, Green-C, Green-D, Green-E**. The export now also carries the six Silver Line routes as `kind = silver` stations and patterns; other buses, replacement shuttle buses, Commuter Rail, and ferries are excluded. The supplied record rules are documented separately; the official station-list attachment and certain Silver-specific interpretations remain outstanding.
+The existing workbook covers core rail and all service dates in its published snapshot: **Red, Mattapan, Orange, Blue, Green-B, Green-C, Green-D, Green-E**. The export now also carries the six Silver Line routes as `kind = silver` stations and patterns. `build_bus.py` adds scheduled bus *connectors* (`bus_departures/bus_calendar/bus_stops.csv.gz`, `bus_manifest.json`): only calls at stops adjacent to an exported station (GTFS parent, published transfer, or within 120 m), trips touching at least two stations, rail-replacement shuttles excluded. Bus rides never add station coverage. Commuter Rail and ferries remain excluded. The supplied record rules are documented separately; the official station-list attachment and certain Silver-specific interpretations remain outstanding.
 
 **Future product scope:** Silver Line support is requested for later delivery; the supplied [Guinness rules](../../docs/references/GUINNESS-RULES.md) require it for the full attempt. The existing workbook remains a rail-only snapshot. Old Phase 7 numbering belongs to the archived proposal, not a current backend execution queue.
 

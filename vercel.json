@@ -3,7 +3,7 @@
   "buildCommand": "mkdir -p public && cp frontend/map_editor/static/index.html frontend/map_editor/static/app.js frontend/map_editor/static/map.js frontend/map_editor/static/style.css public/",
   "functions": {
     "api/index.py": {
-      "includeFiles": "{backend/**,frontend/map_editor/**,output/manifest.json,output/stations.csv.gz,output/service_calendar.csv.gz,output/departures.csv.gz,data/raw/**}",
+      "includeFiles": "{backend/**,frontend/map_editor/**,output/manifest.json,output/stations.csv.gz,output/service_calendar.csv.gz,output/departures.csv.gz,output/bus_manifest.json,output/bus_calendar.csv.gz,output/bus_departures.csv.gz,output/bus_stops.csv.gz,data/raw/**}",
       "maxDuration": 60
     }
   },
