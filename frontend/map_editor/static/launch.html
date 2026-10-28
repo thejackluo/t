@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>T Run · launch</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eaf2f1}
+html,body{margin:0;height:100%;background:#070d12;overflow:hidden}
+#stage,#gmap{position:fixed;inset:0}
+#stage svg{width:100%;height:100%;display:block}
+#gmap{opacity:0;transition:opacity .5s ease;pointer-events:none}
+#gmap.on{opacity:1}
+.vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,#0000 55%,#070d12cc 100%)}
+.station-label{font-family:Inter,system-ui,sans-serif;font-weight:600;fill:#eaf2f1;paint-order:stroke;stroke:#070d12;stroke-width:4px;stroke-linejoin:round}
+.pill{position:fixed;display:inline-flex;align-items:center;gap:10px;padding:9px 14px;border-radius:999px;background:#0f1a22e8;border:1px solid #ffffff1c;backdrop-filter:blur(10px);font-size:14px;font-weight:600;white-space:nowrap;transition:opacity .22s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
+.pill[hidden]{opacity:0;transform:translateY(-6px);pointer-events:none}
+#tag{top:26px;left:28px;font-size:13px;letter-spacing:.14em;text-transform:uppercase}
+#tag i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c,#8fd3c7);box-shadow:0 0 14px var(--c,#8fd3c7)}
+#line{display:block;top:70px;left:28px;line-height:1.4;font-weight:500;font-size:16px;max-width:min(560px,70vw);white-space:normal;border-radius:14px;padding:10px 16px}
+#line b{color:#8fd3c7}
+#clock{top:26px;right:28px;font-variant-numeric:tabular-nums;font-size:22px;font-weight:750;letter-spacing:.02em}
+#clock small{font-size:12px;font-weight:600;color:#8da0ab;letter-spacing:.1em;text-transform:uppercase}
+#count{top:76px;right:28px;font-variant-numeric:tabular-nums}
+#count b{color:#8fd3c7;font-size:18px}
+#stats{bottom:28px;left:28px;display:flex;gap:8px;flex-wrap:wrap;background:none;border:0;padding:0;backdrop-filter:none}
+#stats span{padding:7px 11px;border-radius:9px;background:#0f1a22e8;border:1px solid #ffffff1c;font-size:13px;backdrop-filter:blur(10px)}
+#stats b{color:#8fd3c7}
+#tip{position:fixed;pointer-events:none;background:#0f1a22f2;border:1px solid #ffffff22;border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.35;opacity:0;transition:opacity .15s;max-width:260px}
+#tip b{display:block;font-size:13px;margin-bottom:2px}
+#tip small{color:#8da0ab}
+.card{position:fixed;inset:0;display:grid;place-items:center;text-align:center;background:#070d12;transition:opacity .6s ease}
+.card[hidden]{display:grid;opacity:0;pointer-events:none}
+.card h1{margin:14px 0 8px;font-size:clamp(44px,8vw,96px);letter-spacing:-.03em;line-height:.95}
+.card h1 em{font-style:normal;color:#8fd3c7}
+.card p{margin:0;color:#b9c7cf;font-size:clamp(16px,2.2vw,24px);font-weight:500}
+.card p+p{margin-top:14px;font-size:14px;color:#6f8390;letter-spacing:.12em;text-transform:uppercase}
+.card i.t{display:inline-grid;place-items:center;width:70px;height:70px;border-radius:50%;border:4px solid #eaf2f1;font:900 44px/1 Inter,system-ui,sans-serif;font-style:normal}
+.card .lines{display:flex;gap:6px;justify-content:center;margin-top:28px}
+.card .lines i{display:block;width:46px;height:5px;border-radius:3px}
+#end{background:#070d12d9}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="gmap"></div>
+<div class="vignette"></div>
+<div class="pill" id="tag" hidden><i></i><span></span></div>
+<div class="pill" id="line" hidden></div>
+<div class="pill" id="clock" hidden><small>plan clock</small><span>08:00</span></div>
+<div class="pill" id="count" hidden><b>0</b>/ <span>125</span> stations</div>
+<div class="pill" id="stats" hidden></div>
+<div id="tip"></div>
+<div class="card" id="title">
+  <div><i class="t">T</i><h1>Every station.<br><em>One day.</em></h1><p>Planning a Guinness-style run of the whole MBTA — to the minute.</p></div>
+</div>
+<div class="card" id="end" hidden>
+  <div><h1>T Run <em>·</em> Route Studio</h1><p>Real timetable. Real streets. Built to break a world record.</p><p>mbta-route-studio.vercel.app</p>
+  <div class="lines"><i style="background:#DA291C"></i><i style="background:#ED8B00"></i><i style="background:#003DA5"></i><i style="background:#00843D"></i><i style="background:#7C878E"></i></div></div>
+</div>
+<script src="/launch.js"></script>
+</body>
+</html>

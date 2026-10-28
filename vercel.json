@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "mkdir -p public && cd frontend/map_editor/static && cp index.html app.js map.js style.css demo.html demo.js ../../../public/ && cp demo.html ../../../public/demo",
+  "buildCommand": "mkdir -p public && cd frontend/map_editor/static && cp index.html app.js map.js style.css demo.html demo.js launch.html launch.js ../../../public/ && cp demo.html ../../../public/demo && cp launch.html ../../../public/launch",
   "functions": {
     "api/index.py": {
       "includeFiles": "{backend/**,frontend/map_editor/**,output/manifest.json,output/stations.csv.gz,output/service_calendar.csv.gz,output/departures.csv.gz,output/bus_manifest.json,output/bus_calendar.csv.gz,output/bus_departures.csv.gz,output/bus_stops.csv.gz,data/raw/**}",

@@ -11,7 +11,6 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const api=async(path,body)=>{const r=await fetch(path,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:undefined);const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j;};
 const DATE=()=>{const d=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});return data.dates.includes(d)?d:data.dates[0];};
 
-const LAUNCH=new URLSearchParams(location.search).has('launch');
 let data,stations,colors,names={},svg,view,target,playing=true,chapter=0,runToken=0,hoverSegments=[];
 const layers={};
 
@@ -66,14 +65,13 @@ function hover(e){
   if(!t){tip.style.opacity=0;return;}
   tip.innerHTML=t.dataset.tip;tip.style.opacity=1;tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+14)+'px';
 }
-function caption(eyebrow,title,text,extra='',side=false){
-  const c=$('caption');c.hidden=true;c.classList.toggle('side',LAUNCH&&side);
+function caption(eyebrow,title,text,extra=''){
+  const c=$('caption');c.hidden=true;
   setTimeout(()=>{$('cap-eyebrow').textContent=eyebrow;$('cap-title').textContent=title;$('cap-text').innerHTML=text;$('cap-extra').innerHTML=extra;c.hidden=false;},180);
 }
 function modes(on){document.querySelectorAll('#modes span').forEach(s=>{if(s.dataset.mode===on)s.setAttribute('data-on','');else s.removeAttribute('data-on');});}
 function clear(){layers.legs.innerHTML='';layers.flash.innerHTML='';layers.labels.innerHTML='';}
 function label(id){const s=stations[id];if(!s)return;const p=xy(s.point);layers.labels.append(el('text',{x:p[0]+140,y:p[1]-90,class:'station-label'},s.name));}
-async function popAside(token,ms=2600){if(!LAUNCH)return;await sleep(ms);if(token!==runToken)return;$('caption').classList.add('side');}
 async function drawLeg(leg,evaluated,token,{color,dash,ms=1400}={}){
   /* The polyline draws itself along the official shape; segment hit areas carry the scheduled time for hover. */
   const pts=leg.geometry.map(xy);const stroke=color||(leg.mode==='ride'?colors[leg.route]:'#b48cff');
@@ -123,7 +121,7 @@ const CHAPTERS=[
    flyTo(legs.flatMap(l=>l.geometry),1.25);
    caption('02 · RIDE MODE',`Alewife → Braintree on the Red Line`,`Click two stations — or drag along the track — and the path follows the official shape. The evaluator picks the real train: board ${fmt(ev.legs[0].departure)}, arrive ${fmt(ev.legs[0].arrival)}, ${ev.legs[0].stop_calls?.length||legs[0].stations.length} station calls.`,
      `<span class="stat"><b>${dur(ev.legs[0].travel_seconds)}</b> scheduled ride</span><span class="stat"><b>${dur(ev.legs[0].wait_seconds)}</b> wait</span><span class="stat">trip <b>${esc(ev.legs[0].trip_id)}</b></span>`);
-   hoverSegments=[];await popAside(t);await drawLeg(legs[0],ev.legs[0],t,{ms:2600});if(t!==runToken)return;
+   hoverSegments=[];await drawLeg(legs[0],ev.legs[0],t,{ms:2600});if(t!==runToken)return;
    await sleep(400);await pulseSegments(t,4);await sleep(1200);}},
  {title:'Transfers, platforms, street-level changes',async run(t){
    modes('ride');clear();
@@ -132,7 +130,7 @@ const CHAPTERS=[
    const tr=ev.legs.find(l=>l.transfer?.street_level);
    caption('03 · TRANSFERS',`Boston College → Heath Street`,`Multi-ride paths use GTFS directed transfers and pathways. Where the feed forbids an in-station change (Copley's reversal), the plan prices an <b>estimated street-level transfer</b> — exit, cross, re-enter — instead of refusing.`,
      `<span class="stat"><b>${legs.length-1}</b> transfer${legs.length===2?'':'s'}</span>${tr?`<span class="stat"><b>${dur(tr.transfer_seconds)}</b> ${esc(tr.transfer.via_names?.join(' → ')||'street-level')}</span>`:''}<span class="stat">finish <b>${fmt(ev.summary.finish)}</b></span>`);
-   hoverSegments=[];await popAside(t);for(const [i,l] of legs.entries()){await drawLeg(l,ev.legs[i],t,{ms:1500});if(t!==runToken)return;}
+   hoverSegments=[];for(const [i,l] of legs.entries()){await drawLeg(l,ev.legs[i],t,{ms:1500});if(t!==runToken)return;}
    await pulseSegments(t,3);await sleep(1200);}},
  {title:'Auto: rail vs run, fastest first',async run(t){
    modes('auto');clear();
@@ -146,7 +144,7 @@ const CHAPTERS=[
    const railMin=evRail?Math.round((evRail.summary.finish-evRail.legs[0].start_time)/60):null,runMin=Math.round(evRun.legs[0].travel_seconds/60);
    caption('04 · AUTO MODE',`Fenway → Saint Mary's Street: ${runMin} min on foot vs ${railMin??'—'} min by rail`,`Two Green branches, 270 m apart. Auto asks for the rail paths <i>and</i> a Google street run for the same pair, times each against your itinerary on the same clock, and puts the fastest first. Running is a first-class connector, never a hack.`,
      `<span class="stat"><b>${dur(evRun.legs[0].travel_seconds)}</b> run (${(evRun.legs[0].distance/1000).toFixed(2)} km${street?', street route':''})</span>${evRail?`<span class="stat"><b>${dur(evRail.summary.finish-evRail.legs[0].start_time)}</b> rail via ${esc(names[evRail.legs[0].to])}</span>`:''}`);
-   hoverSegments=[];await popAside(t);
+   hoverSegments=[];
    if(evRail){for(const [i,l] of rail.options[0].legs.entries()){await drawLeg(l,evRail.legs[i],t,{ms:900});if(t!==runToken)return;}}
    await drawLeg(runLeg,evRun.legs[0],t,{ms:1400});await sleep(2500);}},
  {title:'Bus connectors and the Silver Line',async run(t){
@@ -157,7 +155,7 @@ const CHAPTERS=[
    const pts=[...(bus.options[0]?.legs[0].geometry||[]),...(sl.options[0]?.legs[0].geometry||[])];flyTo(pts,1.2);
    caption('05 · BUS & SILVER LINE',`Orange → Red by bus 21, and SL3 to Chelsea`,`Scheduled MBTA buses are legal connectors between lines (Forest Hills → Ashmont skips the whole downtown trunk) but <b>never count as station coverage</b>. The Silver Line is part of the record definition, so SL1–SL5 ride like any line with their own coverage count.`,
      `${evBus?`<span class="stat">bus 21 <b>${dur(evBus.legs[0].travel_seconds)}</b> + ${dur(evBus.legs[0].wait_seconds)} wait</span>`:''}${evSl?`<span class="stat">SL3 <b>${dur(evSl.legs[0].travel_seconds)}</b> · ${evSl.silver_covered.length} Silver stops</span>`:''}`);
-   hoverSegments=[];await popAside(t);
+   hoverSegments=[];
    if(evBus){await drawLeg(bus.options[0].legs[0],evBus.legs[0],t,{ms:1800});if(t!==runToken)return;}
    modes('silver');if(evSl){await drawLeg(sl.options[0].legs[0],evSl.legs[0],t,{ms:1800});}
    await pulseSegments(t,3);await sleep(1500);}},
@@ -167,7 +165,6 @@ const CHAPTERS=[
    const legs=[...a.options[0].legs,...b.options[0].legs,...c.options[0].legs,...d.options[0].legs];
    const ev=await evaluateLegs(legs,'08:00');const an=await api('/api/analyze',{date:DATE(),time:'08:00',legs,assumptions:{run_pace:6}});
    if(t!==runToken)return;flyTo(legs.flatMap(l=>l.geometry),1.2);
-   if(LAUNCH){caption('06 · BACKTRACKING','Where does a plan waste time?','Ride the same track twice and the clock pays for it. Watch the planner find it.');await popAside(t,2400);if(t!==runToken)return;}
    hoverSegments=[];for(const [i,l] of legs.entries()){await drawLeg(l,ev.legs[i],t,{ms:700});if(t!==runToken)return;}
    const rep=new Set(an.repeated_pieces.map(p=>`${p.leg}:${p.segment}`));
    ev.legs.forEach((l,i)=>(l.segments||[]).forEach((s,k)=>{if(rep.has(`${i}:${k}`))layers.flash.append(el('polyline',{points:s.geometry.map(xy).join(' '),fill:'none',stroke:'#ff5a4e','stroke-width':3,'stroke-dasharray':'3 5','vector-effect':'non-scaling-stroke'}));}));
@@ -189,13 +186,10 @@ async function run(i){
   try{await CHAPTERS[i].run(t);}catch(error){if(t===runToken)caption('DEMO','Live data unavailable',esc(error.message));}
   if(t!==runToken)return;
   $('progress').style.width=`${(i+1)/CHAPTERS.length*100}%`;
-  if(LAUNCH&&i===CHAPTERS.length-1){$('title-card').hidden=false;$('caption').hidden=true;document.body.dataset.done='1';return;}
   if(playing)run((i+1)%CHAPTERS.length);
 }
 (async()=>{
   data=await api('/api/network');stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));
   const all=[...data.routes,...(data.bus?.routes||[])];colors=Object.fromEntries(all.map(r=>[r.id,r.color]));names=Object.fromEntries(data.stations.map(s=>[s.id,s.name]));
-  boot();
-  if(LAUNCH){document.body.classList.add('launch');$('title-card').hidden=false;await sleep(2600);$('title-card').hidden=true;await sleep(600);}
-  run(0);
+  boot();run(0);
 })();
