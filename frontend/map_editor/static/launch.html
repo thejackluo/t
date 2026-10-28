@@ -1,63 +1,57 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>T Run · launch</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>T Run — A Boston record, planned to the minute</title>
 <style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eaf2f1}
-html,body{margin:0;height:100%;background:#070d12;overflow:hidden}
-#stage,#gmap{position:fixed;inset:0}
-#stage svg{width:100%;height:100%;display:block}
-#gmap{opacity:0;transition:opacity .5s ease;pointer-events:none}
-#gmap.on{opacity:1}
-.vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,#0000 55%,#070d12cc 100%)}
-.station-label{font-family:Inter,system-ui,sans-serif;font-weight:600;fill:#eaf2f1;paint-order:stroke;stroke:#070d12;stroke-width:4px;stroke-linejoin:round}
-.pill{position:fixed;display:inline-flex;align-items:center;gap:10px;padding:9px 14px;border-radius:999px;background:#0f1a22e8;border:1px solid #ffffff1c;backdrop-filter:blur(10px);font-size:14px;font-weight:600;white-space:nowrap;transition:opacity .22s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
-.pill[hidden]{opacity:0;transform:translateY(-6px);pointer-events:none}
-#tag{top:26px;left:28px;font-size:13px;letter-spacing:.14em;text-transform:uppercase}
-#tag i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c,#8fd3c7);box-shadow:0 0 14px var(--c,#8fd3c7)}
-#line{display:block;top:70px;left:28px;line-height:1.4;font-weight:500;font-size:16px;max-width:min(560px,70vw);white-space:normal;border-radius:14px;padding:10px 16px}
-#line b{color:#8fd3c7}
-#clock{top:26px;right:28px;font-variant-numeric:tabular-nums;font-size:22px;font-weight:750;letter-spacing:.02em}
-#clock small{font-size:12px;font-weight:600;color:#8da0ab;letter-spacing:.1em;text-transform:uppercase}
-#count{top:76px;right:28px;font-variant-numeric:tabular-nums}
-#count b{color:#8fd3c7;font-size:18px}
-#stats{bottom:28px;left:28px;display:flex;gap:8px;flex-wrap:wrap;background:none;border:0;padding:0;backdrop-filter:none}
-#stats span{padding:7px 11px;border-radius:9px;background:#0f1a22e8;border:1px solid #ffffff1c;font-size:13px;backdrop-filter:blur(10px)}
-#stats b{color:#8fd3c7}
-#tip{position:fixed;pointer-events:none;background:#0f1a22f2;border:1px solid #ffffff22;border-radius:10px;padding:8px 11px;font-size:13px;line-height:1.35;opacity:0;transition:opacity .15s;max-width:260px}
-#tip b{display:block;font-size:13px;margin-bottom:2px}
-#tip small{color:#8da0ab}
-.card{position:fixed;inset:0;display:grid;place-items:center;text-align:center;background:#070d12;transition:opacity .6s ease}
-.card[hidden]{display:grid;opacity:0;pointer-events:none}
-.card h1{margin:14px 0 8px;font-size:clamp(44px,8vw,96px);letter-spacing:-.03em;line-height:.95}
-.card h1 em{font-style:normal;color:#8fd3c7}
-.card p{margin:0;color:#b9c7cf;font-size:clamp(16px,2.2vw,24px);font-weight:500}
-.card p+p{margin-top:14px;font-size:14px;color:#6f8390;letter-spacing:.12em;text-transform:uppercase}
-.card i.t{display:inline-grid;place-items:center;width:70px;height:70px;border-radius:50%;border:4px solid #eaf2f1;font:900 44px/1 Inter,system-ui,sans-serif;font-style:normal}
-.card .lines{display:flex;gap:6px;justify-content:center;margin-top:28px}
-.card .lines i{display:block;width:46px;height:5px;border-radius:3px}
-#end{background:#070d12d9}
+:root{color-scheme:dark;font-family:"TeX Gyre Heros","Helvetica Neue",Helvetica,Arial,sans-serif;color:#edf2f3;background:#080f16}
+*{box-sizing:border-box}body{margin:0;overflow:hidden}button,a{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid #9ee0ce;outline-offset:5px}
+#film{width:1920px;height:1080px;position:absolute;transform-origin:0 0;background:#101b26;overflow:hidden}
+#gmap,#stage,.shade{position:absolute;inset:0}#gmap{opacity:.7;transition:opacity 1.2s}#stage{pointer-events:none}#stage svg{width:100%;height:100%}
+.shade{pointer-events:none;background:linear-gradient(90deg,#09121ced 0%,#09121cbd 24%,#09121c15 49%,#09121c00 75%),linear-gradient(0deg,#09121cdd,transparent 18%,transparent 86%,#09121c44);z-index:1}
+.station-label{fill:#eef3f4;paint-order:stroke;stroke:#101b26;stroke-linejoin:round;font-weight:700}
+.masthead{position:absolute;z-index:4;left:56px;top:40px;display:flex;align-items:center;gap:16px}.t-logo{border:4px solid #eff2f3;border-radius:50%;width:52px;height:52px;display:grid;place-items:center;font-weight:900;font-size:38px;line-height:1}.wordmark{font-size:24px;font-weight:800;letter-spacing:-.6px}.wordmark small{display:block;font-size:11px;letter-spacing:2.8px;color:#9baebb;margin-top:5px;font-weight:600;text-transform:uppercase}
+#chapter{position:absolute;left:56px;top:154px;z-index:4;width:490px}#chapter .kicker{font-size:13px;letter-spacing:2.4px;font-weight:700;text-transform:uppercase;color:#9edac9;display:flex;align-items:center;gap:12px}#chapter .kicker:before{content:"";width:28px;height:3px;background:currentColor}
+#chapter h1{font-size:51px;line-height:1.04;letter-spacing:-1.8px;margin:17px 0 0;font-weight:800;max-width:510px;text-wrap:balance}#chapter h1 em{color:#9edac9;font-style:normal}
+#panel{position:absolute;left:56px;top:329px;width:405px;z-index:4;transition:opacity .4s,transform .5s}.panel{background:#111f2de8;border:1px solid #ffffff16;border-radius:14px;overflow:hidden;box-shadow:0 15px 50px #0002}
+.panel-head{padding:20px 24px;border-bottom:1px solid #ffffff13;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#b5c2cc;display:flex;justify-content:space-between;align-items:center}.panel-head .status{color:#9edac9;font-size:10px;letter-spacing:1px}
+.panel-body{padding:23px 24px}.subtle{font-size:14px;color:#94a8b8;line-height:1.5}.panel h2{font-size:24px;line-height:1.15;letter-spacing:-.5px;margin:0 0 9px}
+.rule{padding:15px 0;display:flex;gap:14px;align-items:flex-start;border-bottom:1px solid #ffffff10}.rule:last-child{border:0}.rule b.num{font-size:14px;color:#88a0b2;padding-top:3px}.rule strong{font-size:17px;display:block;margin-bottom:4px}.rule small{font-size:13px;color:#99aebb;line-height:1.45;display:block}
+.field{border:1px solid #ffffff16;border-radius:7px;background:#0a1520;padding:12px 14px;margin-bottom:10px}.field small{display:block;font-size:10px;color:#8ba1b1;letter-spacing:1.7px;text-transform:uppercase;margin-bottom:7px}.field b{font-size:19px;font-weight:600}
+.ride-row{display:flex;align-items:center;gap:12px;padding:14px 0;font-size:15px}.route-badge{display:inline-grid;place-items:center;min-width:34px;height:29px;padding:0 8px;font-weight:800;border-radius:5px;color:white;background:var(--c,#00843d);font-size:14px}.time{font-variant-numeric:tabular-nums;color:#c9d7df}
+.metric{padding:15px 0;border-top:1px solid #ffffff12;display:flex;align-items:baseline;gap:8px}.metric b{font-size:32px;letter-spacing:-1px}.metric span{font-size:13px;color:#9fb2c0}
+.button{display:block;background:#9edac9;color:#102821;border:0;border-radius:6px;padding:12px 15px;width:100%;font-size:14px;font-weight:750;text-align:center;margin-top:14px}
+.comparison{padding:16px;border-radius:8px;background:#0b1722;border:1px solid #ffffff12;margin-bottom:12px;transition:background .4s,border-color .4s}.comparison.selected{border-color:#9edac980;background:#14342e}.comparison .top{display:flex;justify-content:space-between;align-items:center;font-size:18px;font-weight:700}.comparison .top b{font-size:28px}.comparison small{display:block;color:#99aebb;font-size:12px;margin-top:7px}.comparison.selected small{color:#a8cabe}.best{font-size:10px;background:#9edac9;color:#12372c;padding:4px 6px;border-radius:3px;letter-spacing:1px;margin-left:10px}
+.mini-leg{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #ffffff0e}.mini-leg .num{color:#718a9d;font-size:11px;width:20px}.mini-leg .desc{font-size:14px;flex:1}.mini-leg .desc small{display:block;font-size:11px;color:#90a5b6;margin-top:4px}.mini-leg .arrival{font-size:13px;color:#b3c4d0;font-variant-numeric:tabular-nums}
+.diff-minus,.diff-plus{font-size:14px;line-height:1.45;padding:12px 14px;border-left:3px solid #ff796d;background:#2b242b;margin-top:10px}.diff-plus{border-color:#9edac9;background:#16332e}.proof{display:flex;gap:10px;margin-top:18px;align-items:center;color:#9edac9;font-size:13px}.proof i{width:6px;height:6px;background:currentColor;border-radius:50%}
+#caption{position:absolute;left:560px;bottom:154px;max-width:690px;z-index:4;padding:14px 20px;border-radius:9px;background:#0d1a26f2;border:1px solid #ffffff2e;color:#dce7ee;line-height:1.35;font-size:18px;backdrop-filter:blur(10px);box-shadow:0 12px 40px #0005}#caption b{color:#9edac9}
+.hidden{opacity:0!important;transform:translateY(10px);pointer-events:none}.enter{animation:enter .6s cubic-bezier(.16,1,.3,1) both}@keyframes enter{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+#modes{position:absolute;left:56px;bottom:62px;display:flex;gap:2px;z-index:4;background:#111f2de8;border:1px solid #ffffff19;border-radius:9px;padding:5px}#modes span{font-size:14px;font-weight:650;color:#7991a3;padding:12px 19px;border-radius:6px;transition:color .3s,background .3s}#modes span.active{background:#eff4f3;color:#14232d}
+#legend{position:absolute;right:48px;bottom:56px;z-index:4;width:221px;padding:19px 22px;background:#111f2de8;border:1px solid #ffffff18;border-radius:12px}.legend-title{font-size:10px;letter-spacing:2px;color:#7991a3;text-transform:uppercase;margin-bottom:14px}.legend-item{display:flex;align-items:center;gap:12px;color:#d5dfe6;font-size:13px;margin-top:11px;opacity:.25;transition:opacity .6s}.legend-item.on{opacity:1}.legend-item i{width:26px;height:3px;background:var(--c);border-radius:2px}.legend-item.bus i{background:repeating-linear-gradient(90deg,#ffc72c 0 4px,transparent 4px 8px)}
+#score{position:absolute;right:48px;top:44px;z-index:4;text-align:right}.clock-label{font-size:10px;letter-spacing:2px;color:#7f97a9;text-transform:uppercase}.clock{font-size:48px;font-weight:750;letter-spacing:-2px;line-height:1.2;font-variant-numeric:tabular-nums}#coverage{font-size:14px;color:#8da4b5;margin-top:4px}#coverage b{color:#9edac9;font-size:20px}#provenance{font-size:10px;color:#7e94a6;letter-spacing:.5px;margin-top:10px}
+#tip{position:absolute;z-index:4;border-radius:9px;background:#11222fee;border:1px solid #ffffff24;padding:13px 17px;font-size:14px;max-width:310px;opacity:0;transition:opacity .25s;pointer-events:none;line-height:1.45}#tip strong{display:block;font-size:16px;margin-bottom:4px}#tip small{color:#8fa7b8;font-size:12px}
+#studio{position:absolute;left:280px;top:225px;width:1350px;height:760px;border:1px solid #ffffff30;border-radius:12px;z-index:5;background:#fff;box-shadow:0 35px 100px #0007;opacity:0;transform:translateY(26px) scale(.96);transition:opacity 1s,transform 1.5s cubic-bezier(.2,.8,.2,1);overflow:hidden;pointer-events:none}#studio.on{opacity:1;transform:none}#studio-bar{height:36px;background:#172632;display:flex;align-items:center;gap:7px;padding:0 14px}#studio-bar i{width:7px;height:7px;border-radius:50%;background:#637584}#studio-bar span{font-size:11px;color:#9aafbf;margin-left:280px}#studio iframe{width:1350px;height:724px;border:0;display:block;background:#f5f5f5}
+#final-brand{position:absolute;left:56px;top:150px;z-index:6;opacity:0;transition:opacity 1s}#final-brand.on{opacity:1}#final-brand h2{font-size:33px;letter-spacing:-1px;margin:0 0 8px}#final-brand p{font-size:15px;color:#a9becd;margin:0}
+#share-link{font-family:monospace;font-size:12px;color:#a3baac;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%;padding:11px;background:#0a1620;border-radius:5px;margin-top:14px}
+#controls{position:fixed;z-index:20;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;background:#0b1722dd;padding:6px 10px;border-radius:5px;font-size:12px;opacity:.5;transition:opacity .2s}#controls:hover,#controls:focus-within{opacity:1}#controls button,#controls a{color:#d2dfe6;text-decoration:none;border:0;background:none;padding:4px 8px}#controls input{width:120px;accent-color:#9edac9}body.recording #controls{display:none}
+#loading{position:absolute;left:56px;bottom:156px;z-index:10;color:#9fb5c5;font-size:15px;max-width:420px;line-height:1.5}#loading b{display:block;color:#e1edf3;margin-bottom:6px}#loading button{padding:8px 15px;margin-top:12px;background:#9edac9;border:0;border-radius:4px;color:#14332a}#error{color:#ffb3a9}#timeline{position:absolute;bottom:0;left:0;height:3px;background:#9edac9;z-index:10;width:0}
+@media(prefers-reduced-motion:reduce){.enter{animation:none}*{scroll-behavior:auto}}
 </style>
 </head>
 <body>
-<div id="stage"></div>
-<div id="gmap"></div>
-<div class="vignette"></div>
-<div class="pill" id="tag" hidden><i></i><span></span></div>
-<div class="pill" id="line" hidden></div>
-<div class="pill" id="clock" hidden><small>plan clock</small><span>08:00</span></div>
-<div class="pill" id="count" hidden><b>0</b>/ <span>125</span> stations</div>
-<div class="pill" id="stats" hidden></div>
+<main id="film" aria-label="T Run: a sixty-second product film">
+<div id="gmap" aria-label="Google map of Boston"></div><div id="stage"></div><div class="shade"></div>
+<div class="masthead"><span class="t-logo" aria-hidden="true">T</span><div class="wordmark">RUN / ROUTE STUDIO<small>Boston · all-stations planning</small></div></div>
+<section id="chapter"><div class="kicker" id="eyebrow">The Boston challenge</div><h1 id="headline">Every station.<br>One <em>continuous clock.</em></h1></section>
+<aside id="panel" class="hidden" aria-live="polite"></aside><div id="caption" class="hidden"></div>
+<div id="score"><div class="clock-label">Rehearsal · plan clock</div><div class="clock" id="clock">08:00</div><div id="coverage"><b>0</b> / 125 rail stations</div><div id="provenance">Scheduled ≠ observed · not a record claim</div></div>
+<div id="modes" aria-label="Connection modes"><span data-mode="auto">Auto</span><span data-mode="ride">Ride</span><span data-mode="bus">Bus</span><span data-mode="run">Run</span></div>
+<aside id="legend"><div class="legend-title">The network</div><div class="legend-item" data-line="Red" style="--c:#DA291C"><i></i>Red</div><div class="legend-item" data-line="Orange" style="--c:#ED8B00"><i></i>Orange</div><div class="legend-item" data-line="Blue" style="--c:#4081db"><i></i>Blue</div><div class="legend-item" data-line="Green" style="--c:#00ad67"><i></i>Green</div><div class="legend-item" data-line="Silver" style="--c:#a1afb7"><i></i>Silver Line</div><div class="legend-item bus" data-line="Bus"><i></i>Bus connector</div></aside>
 <div id="tip"></div>
-<div class="card" id="title">
-  <div><i class="t">T</i><h1>Every station.<br><em>One day.</em></h1><p>Planning a Guinness-style run of the whole MBTA — to the minute.</p></div>
-</div>
-<div class="card" id="end" hidden>
-  <div><h1>T Run <em>·</em> Route Studio</h1><p>Real timetable. Real streets. Built to break a world record.</p><p>mbta-route-studio.vercel.app</p>
-  <div class="lines"><i style="background:#DA291C"></i><i style="background:#ED8B00"></i><i style="background:#003DA5"></i><i style="background:#00843D"></i><i style="background:#7C878E"></i></div></div>
-</div>
+<section id="studio" aria-label="The actual route studio"><div id="studio-bar"><i></i><i></i><i></i><span>mbta-route-studio.vercel.app · shared rehearsal · view only</span></div><iframe title="Actual route studio, shared rehearsal" id="studio-frame"></iframe></section>
+<div id="final-brand"><h2>Plan it. Test it. Chase the record.</h2><p>mbta-route-studio.vercel.app · Built for the attempt, not a claim of approval.</p></div>
+<div id="loading"><b>Preparing the real rehearsal…</b>Loading MBTA shapes, timetable and pedestrian routes.</div><div id="timeline"></div>
+</main>
+<nav id="controls" aria-label="Film controls"><button id="play" disabled>Play</button><button id="replay">Replay</button><input id="scrub" type="range" min="0" max="60" step=".1" value="0" aria-label="Film position"><span id="position">0:00 / 1:00</span><a href="/demo">Interactive tour</a><a href="/">Open studio</a></nav>
 <script src="/launch.js"></script>
-</body>
-</html>
+</body></html>

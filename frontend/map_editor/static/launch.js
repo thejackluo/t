@@ -1,199 +1,291 @@
-/* 30-second launch film of the route studio. Everything is fetched live from the same API the studio uses (official
-   shapes, the pinned timetable, Google street routes); the script only decides what to show when. */
+/* Film-specific presentation of the real studio APIs. Fixed service date for reproducible rehearsal timing. */
+'use strict';
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const xy=p=>[(p[1]+71.1)*82000,(42.35-p[0])*111000];
-const NS='http://www.w3.org/2000/svg';
-const el=(tag,attrs={},text)=>{const n=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!=null)n.textContent=text;return n;};
-const fmt=s=>s==null?'—':`${String(Math.floor(s/3600)%24).padStart(2,'0')}:${String(Math.floor(s%3600/60)).padStart(2,'0')}`;
-const dur=s=>s==null?'—':s>=3600?`${Math.floor(s/3600)}h ${Math.round(s%3600/60)}m`:`${Math.round(s/60)}m`;
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const api=async(path,body)=>{const r=await fetch(path,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:undefined);const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j;};
-const ease=t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
-
-let gmFailed=false,data,stations,colors,names={},svg,view,target,FULL,gmap=null,gpoly=null;
-const layers={};
-const DATE=()=>{const d=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});return data.dates.includes(d)?d:data.dates[0];};
-const path=(from,to,o={})=>api('/api/options?'+new URLSearchParams({from,to,date:DATE(),time:o.time||'08:00',route:o.route||'',mode:o.mode||'rail'}));
-const evaluate=(legs,time='08:00')=>api('/api/evaluate',{date:DATE(),time,legs});
-
-/* ---- stage ---- */
+const fmt=s=>s==null?'—':String(Math.floor(s/3600)%24).padStart(2,'0')+':'+String(Math.floor(s%3600/60)).padStart(2,'0');
+const dur=s=>s==null?'—':s>=3600?Math.floor(s/3600)+'h '+Math.round(s%3600/60)+'m':Math.round(s/60)+'m';
+const clamp=n=>Math.max(0,Math.min(1,n));
+const ease=n=>{n=clamp(n);return n*n*(3-2*n);};
+const lerp=(a,b,t)=>a+(b-a)*t;
+const NS='http://www.w3.org/2000/svg',WORLD=1048576,W=1920,H=1080,DURATION=60;
+const params=new URLSearchParams(location.search);
+const el=(tag,attrs={})=>{const n=document.createElementNS(NS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,v);return n;};
+async function api(url,body){
+  const r=await fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j;
+}
+function project(p){const sin=Math.sin(p[0]*Math.PI/180);return [(p[1]+180)/360*WORLD,(.5-Math.log((1+sin)/(1-sin))/(4*Math.PI))*WORLD];}
+function unproject(p){return {lat:Math.atan(Math.sinh(Math.PI*(1-2*p[1]/WORLD)))*180/Math.PI,lng:p[0]/WORLD*360-180};}
+let network,stations,colors,date,svg,root,groups,googleMap=null,mapOK=false,frame,ready=false;
+let elapsed=0,playing=false,last=0,scene=-1,offset=0;
+let camera,fullCamera,scale=1,sceneStartCamera,sceneTarget;
+let day,dayEv,run,runEv,rail,railEv,bus,busEv,silver,silverEv,transfer,transferEv,analysis,sharedURL;
+const drawings=[],dots=[],labels=[];
+const groupHidden=new Set();
+const cuts=[0,9,16,23,30,36,44,51,60];
+const name=id=>stations[id]?.name||id;
+const option=(a,b,o={})=>api('/api/options?'+new URLSearchParams({from:a,to:b,date,time:o.time||'08:00',route:o.route||'',mode:o.mode||'rail'}));
+const evaluate=(legs,time='08:00')=>api('/api/evaluate',{date,time,legs});
+const family=r=>r?.startsWith('Green')?'Green':/^\d+$/.test(r||'')?'Silver':r==='Mattapan'?'Red':r;
+function color(leg){return leg.mode!=='ride'?'#bca1f7':leg.kind==='bus'?'#ffc72c':leg.route==='Blue'?'#4081db':leg.route?.startsWith('Green')?'#00ad67':family(leg.route)==='Silver'?'#a1afb7':colors[leg.route]||'#9edac9';}
+function fitted(points,pad=1.35,maximumZoom=14.3){
+  const pts=points.map(project),xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+  const dx=(Math.max(...xs)-Math.min(...xs))*pad,dy=(Math.max(...ys)-Math.min(...ys))*pad;
+  const z=Math.min(maximumZoom,Math.log2(Math.min(1170/Math.max(dx,1e-6),790/Math.max(dy,1e-6))*WORLD/256));
+  const s=256*Math.pow(2,z)/WORLD;
+  // Keep the journey in the unobstructed map area, right of the product panel.
+  return [(Math.min(...xs)+Math.max(...xs))/2-220/s,(Math.min(...ys)+Math.max(...ys))/2-15/s,z];
+}
+function fitFilm(){const s=Math.min(innerWidth/W,innerHeight/H);$('film').style.transform='scale('+s+')';$('film').style.left=((innerWidth-W*s)/2)+'px';$('film').style.top=((innerHeight-H*s)/2)+'px';}
+function applyCamera(c){
+  camera=c;scale=256*Math.pow(2,c[2])/WORLD;
+  root.setAttribute('transform','translate('+(W/2-c[0]*scale)+' '+(H/2-c[1]*scale)+') scale('+scale+')');
+  for(const d of dots)d.node.setAttribute('r',d.radius/scale);
+  for(const l of labels){l.node.setAttribute('font-size',18/scale);l.node.setAttribute('stroke-width',5/scale);l.node.setAttribute('x',l.point[0]+12/scale);l.node.setAttribute('y',l.point[1]+l.dy/scale);}
+  if(googleMap)googleMap.moveCamera({center:unproject(c),zoom:c[2]});
+}
 function boot(){
-  svg=el('svg',{xmlns:NS});$('stage').append(svg);
-  ['tracks','legs','flash','stations','labels'].forEach(k=>{layers[k]=el('g',{id:k});svg.append(layers[k]);});
-  const pts=data.stations.map(s=>xy(s.point)),xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
-  FULL=[Math.min(...xs)-2000,Math.min(...ys)-1500,Math.max(...xs)-Math.min(...xs)+4000,Math.max(...ys)-Math.min(...ys)+3000];
-  fitAspect(FULL);view=[...FULL];target=[...FULL];svg.setAttribute('viewBox',view.join(' '));
-  requestAnimationFrame(tick);
+  fitFilm();addEventListener('resize',fitFilm);
+  svg=el('svg',{viewBox:'0 0 '+W+' '+H,role:'img','aria-label':'MBTA route rehearsal, drawn along official track shapes'});
+  $('stage').append(svg);root=el('g');svg.append(root);groups={};
+  for(const k of ['tracks','legs','repeats','stations','labels','pencil']){groups[k]=el('g');root.append(groups[k]);}
+  fullCamera=fitted(network.stations.map(s=>s.point),1.15,12);camera=[...fullCamera];applyCamera(camera);
 }
-function fitAspect(b){const a=svg.clientWidth/Math.max(1,svg.clientHeight);if(b[2]/b[3]<a){const w=b[3]*a;b[0]-=(w-b[2])/2;b[2]=w;}else{const h=b[2]/a;b[1]-=(h-b[3])/2;b[3]=h;}return b;}
-let speed=0.11;
-function tick(){
-  let moved=false;for(let i=0;i<4;i++){const d=target[i]-view[i];if(Math.abs(d)>0.5){view[i]+=d*speed;moved=true;}}
-  if(moved){svg.setAttribute('viewBox',view.join(' '));const k=Math.min(1,Math.max(0.2,view[2]/FULL[2]));layers.stations.querySelectorAll('circle').forEach(c=>c.setAttribute('r',(+c.dataset.r)*k));layers.labels.querySelectorAll('text').forEach(t=>t.setAttribute('font-size',view[2]/72));}
-  requestAnimationFrame(tick);
+function addPath(geometry,{layer='legs',stroke='#fff',width=5,dash='',opacity=1,start=0,duration=1,end=61,group,head=true}={}){
+  if(!geometry?.length)return;
+  const pts=geometry.map(project),lengths=[0];for(let i=1;i<pts.length;i++)lengths.push(lengths[i-1]+Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]));
+  const node=el('polyline',{fill:'none',stroke,'stroke-width':width,'stroke-linecap':'round','stroke-linejoin':'round','vector-effect':'non-scaling-stroke',opacity:0});
+  if(dash)node.setAttribute('stroke-dasharray',dash);
+  groups[layer].append(node);
+  const pencil=head?el('circle',{fill:stroke,stroke:'#eaf3ef','stroke-width':1.5,'vector-effect':'non-scaling-stroke',opacity:0}):null;
+  if(pencil)groups.pencil.append(pencil);
+  const d={node,pts,lengths,total:lengths.at(-1),start,duration,end,opacity,group,pencil,last:-1};
+  drawings.push(d);return d;
 }
-function flyTo(points,pad=1.3,minW=8000,s=0.11){
-  speed=s;const ps=points.map(xy),xs=ps.map(p=>p[0]),ys=ps.map(p=>p[1]);
-  const w=Math.max(minW,(Math.max(...xs)-Math.min(...xs))*pad),h=Math.max(minW*.6,(Math.max(...ys)-Math.min(...ys))*pad);
-  const cx=(Math.max(...xs)+Math.min(...xs))/2,cy=(Math.max(...ys)+Math.min(...ys))/2;
-  target=fitAspect([cx-w/2,cy-h/2,w,h]);
+function partial(d,f){
+  if(f===d.last)return;d.last=f;
+  if(f<=0){d.node.setAttribute('opacity',0);if(d.pencil)d.pencil.setAttribute('opacity',0);return;}
+  const length=d.total*f;let i=1;while(i<d.lengths.length&&d.lengths[i]<length)i++;
+  const a=d.pts[Math.max(0,i-1)],b=d.pts[Math.min(i,d.pts.length-1)],den=(d.lengths[i]??d.total)-d.lengths[i-1];
+  const k=den?(length-d.lengths[i-1])/den:0,tip=[lerp(a[0],b[0],k),lerp(a[1],b[1],k)];
+  d.node.setAttribute('points',d.pts.slice(0,i).concat([tip]).map(p=>p.join(',')).join(' '));d.node.setAttribute('opacity',d.opacity);
+  if(d.pencil){d.pencil.setAttribute('cx',tip[0]);d.pencil.setAttribute('cy',tip[1]);d.pencil.setAttribute('r',5/scale);d.pencil.setAttribute('opacity',f<1?1:0);}
 }
-function clear(){layers.legs.innerHTML='';layers.flash.innerHTML='';layers.labels.innerHTML='';$('tip').style.opacity=0;}
-function label(id){const s=stations[id];if(!s)return;const p=xy(s.point);layers.labels.append(el('text',{x:p[0]+view[2]/160,y:p[1]-view[2]/200,class:'station-label','font-size':view[2]/72},s.name));}
-function screen(p){const q=xy(p),pt=svg.createSVGPoint();pt.x=q[0];pt.y=q[1];return pt.matrixTransform(svg.getScreenCTM());}
+function addDot(s,t){
+  const p=project(s.point),node=el('circle',{cx:p[0],cy:p[1],r:0,fill:s.routes.length>1?'#f1f4f5':'#cbd8df',stroke:'#142330','stroke-width':2,'vector-effect':'non-scaling-stroke',opacity:0});groups.stations.append(node);
+  dots.push({node,radius:s.routes.length>1?7:5,start:t,family:family(s.routes[0])});
+}
+function label(id,start,end,dy=-15){
+  const p=project(stations[id].point),n=el('text',{class:'station-label',opacity:0});n.textContent=name(id);groups.labels.append(n);labels.push({node:n,point:p,dy,start,end});
+}
+function route(leg,start,duration,end=61,extra={}){return addPath(leg.geometry,{stroke:color(leg),width:6,dash:leg.mode!=='ride'?'9 7':leg.kind==='bus'?'3 9':'',start,duration,end,...extra});}
+function panel(title,body,status='LIVE TIMETABLE'){return '<div class="panel"><div class="panel-head">'+title+'<span class="status">'+status+'</span></div><div class="panel-body">'+body+'</div></div>';}
+function setPanel(html){$('panel').innerHTML=html;$('panel').className='enter';}
+function title(kicker,headline){$('eyebrow').textContent=kicker;$('headline').innerHTML=headline;$('chapter').classList.remove('enter');void $('chapter').offsetWidth;$('chapter').classList.add('enter');}
+function caption(html){$('caption').innerHTML=html||'';$('caption').className=html?'enter':'hidden';}
+function mode(id){document.querySelectorAll('#modes span').forEach(n=>n.classList.toggle('active',n.dataset.mode===id));}
+function scoreboard(sec,covered){$('clock').textContent=fmt(sec);$('coverage').innerHTML='<b>'+covered+'</b> / '+network.rail_station_count+' rail stations';}
+function field(label,value){return '<div class="field"><small>'+label+'</small><b>'+esc(value)+'</b></div>';}
+function miniLeg(leg,ev,i){return '<div class="mini-leg"><span class="num">'+String(i+1).padStart(2,'0')+'</span><span class="route-badge" style="--c:'+color(leg)+'">'+esc(leg.mode==='run'?'RUN':leg.route?.replace('Green-','')||'')+'</span><div class="desc">'+esc(name(leg.to))+'<small>'+esc(name(leg.from))+' → '+dur(ev.travel_seconds)+'</small></div><span class="arrival">'+fmt(ev.arrival)+'</span></div>';}
+function metric(value,description){return '<div class="metric"><b>'+value+'</b><span>'+description+'</span></div>';}
+function tip(id,html,on){const n=$('tip');if(!on){n.style.opacity=0;return;}const p=project(stations[id].point),x=(p[0]-camera[0])*scale+W/2,y=(p[1]-camera[1])*scale+H/2;n.innerHTML=html;n.style.left=Math.min(1530,Math.max(540,x+18))+'px';n.style.top=Math.min(830,Math.max(155,y+12))+'px';n.style.opacity=1;}
 
-/* ---- overlays ---- */
-function pill(id,html,color){const n=$(id);if(html==null){n.hidden=true;return;}if(id==='tag'){n.querySelector('span').textContent=html;n.querySelector('i').style.setProperty('--c',color||'#8fd3c7');}else n.innerHTML=html;n.hidden=false;}
-const tag=(t,c)=>pill('tag',t,c),line=t=>pill('line',t),stats=arr=>pill('stats',arr?arr.map(s=>`<span>${s}</span>`).join(''):null);
-function clock(sec){const c=$('clock');c.hidden=false;c.querySelector('span').textContent=fmt(sec);}
-function count(n,total){const c=$('count');c.hidden=false;c.querySelector('b').textContent=n;c.querySelector('span').textContent=total;}
-async function tip(stationPoint,html,ms=700){const sp=screen(stationPoint),t=$('tip');t.innerHTML=html;t.style.left=(sp.x+14)+'px';t.style.top=(sp.y+12)+'px';t.style.opacity=1;
-  const q=xy(stationPoint),ring=el('circle',{cx:q[0],cy:q[1],r:90,fill:'none',stroke:'#8fd3c7','stroke-width':3,'vector-effect':'non-scaling-stroke'});layers.flash.append(ring);await sleep(ms);ring.remove();t.style.opacity=0;}
-
-/* ---- drawing ---- */
-async function reveal(line,ms){const len=line.getTotalLength();line.style.strokeDasharray=`${len} ${len}`;line.style.strokeDashoffset=len;line.getBoundingClientRect();line.style.transition=`stroke-dashoffset ${ms}ms cubic-bezier(.3,.7,.3,1)`;line.style.strokeDashoffset=0;await sleep(ms);line.style.transition='';}
-async function drawTrack(l,ms){const line=el('polyline',{points:l.geometry.map(xy).join(' '),fill:'none',stroke:colors[l.route]||'#888','stroke-width':3,opacity:.9,'stroke-linecap':'round','stroke-linejoin':'round','vector-effect':'non-scaling-stroke'});layers.tracks.append(line);await reveal(line,ms);line.style.strokeDasharray='';line.setAttribute('opacity',.42);}
-function dot(s){const p=xy(s.point),r=s.routes.length>1?110:70,c=el('circle',{cx:p[0],cy:p[1],r:0,'data-r':r,fill:s.kind==='silver'?'#7C878E':'#eaf2f1',stroke:'#070d12','stroke-width':1.5,'vector-effect':'non-scaling-stroke'});layers.stations.append(c);c.style.transition='r .35s cubic-bezier(.2,1.4,.4,1)';requestAnimationFrame(()=>c.setAttribute('r',r*Math.min(1,view[2]/FULL[2])));}
-async function drawLeg(leg,ms=900,{color,dash,width}={}){
-  const pts=leg.geometry.map(xy),stroke=color||(leg.mode==='ride'?colors[leg.route]:'#b48cff');
-  const d=dash||(leg.mode!=='ride'?'7 6':leg.kind==='bus'?'2 7':'');
-  layers.legs.append(el('polyline',{points:pts.join(' '),fill:'none',stroke:'#070d12','stroke-width':(width||5)+4,'stroke-linecap':'round','stroke-linejoin':'round','vector-effect':'non-scaling-stroke',opacity:.85}));
-  const line=el('polyline',{points:pts.join(' '),fill:'none',stroke,'stroke-width':width||6,'stroke-linecap':'round','stroke-linejoin':'round','vector-effect':'non-scaling-stroke'});layers.legs.append(line);
-  await reveal(line,ms);line.style.strokeDasharray=d;
+function buildDrawings(){
+  const families=[['Red',['Red','Mattapan']],['Orange',['Orange']],['Blue',['Blue']],['Green',['Green-B','Green-C','Green-D','Green-E']],['Silver',['741','742','743','746','749','751']]];
+  const stationSeen=new Set();
+  families.forEach(([f,rs],i)=>{
+    const start=.25+i*1.05;
+    // Each shape follows its actual vertex order; points are revealed progressively rather than changing opacity.
+    for(const l of network.lines.filter(l=>rs.includes(l.route)))addPath(l.geometry,{layer:'tracks',stroke:color({mode:'ride',route:l.route}),width:3.2,opacity:.52,start,duration:2.1,group:f,head:i<4});
+    network.stations.filter(s=>s.routes.some(r=>rs.includes(r))&&!stationSeen.has(s.id)).forEach((s,k)=>{stationSeen.add(s.id);addDot(s,start+.7+(k%18)*.04);});
+  });
+  day.legs.forEach((l,i)=>{
+    const t=36+i*(7/day.legs.length);
+    route(l,t,.4,51,{width:5});
+  });
+  const first=day.parts[0];
+  first.forEach(l=>route(l,10.2,2.3,16));
+  label('place-unsqu',9,16);label('place-fenwy',11,23,28);
+  rail.options[0]?.legs.forEach((l,i)=>route(l,16.2+i*.5,.9,23,{opacity:.45,width:5}));
+  route(run,19.5,2,30,{width:7});label(run.to,20,23,-22);
+  day.parts[2].forEach(l=>route(l,23,1.3,30));
+  day.parts[3].forEach(l=>route(l,24.3,.7,30));
+  day.parts[4].forEach(l=>route(l,25,1.5,30));
+  day.parts[5].forEach(l=>route(l,26.5,1.5,30));
+  label('place-coecl',25.8,30);
+  route(bus.options[0].legs[0],31,2,36,{width:6.5});
+  route(silver.options[0].legs[0],33,1.6,36,{width:5});
+  label('place-forhl',30,36);label('place-asmnl',32,36);label('place-chels',34,36);
+  const rep=new Set((analysis?.repeated_pieces||[]).map(p=>p.leg+':'+p.segment));
+  dayEv.legs.forEach((l,i)=>(l.segments||[]).forEach((s,k)=>{
+    if(rep.has(i+':'+k))addPath(s.geometry,{layer:'repeats',stroke:'#ff796d',width:4,dash:'5 7',start:44,duration:.8,end:51,head:false});
+  }));
 }
-
-/* ---- Google map for the street scene ---- */
-const NIGHT=[{elementType:'geometry',stylers:[{color:'#131c24'}]},{elementType:'labels.text.fill',stylers:[{color:'#8da0ab'}]},{elementType:'labels.text.stroke',stylers:[{color:'#0b141b'}]},{featureType:'poi',stylers:[{visibility:'off'}]},{featureType:'road',elementType:'geometry',stroke:1,stylers:[{color:'#2a3844'}]},{featureType:'road',elementType:'geometry.stroke',stylers:[{color:'#1a252e'}]},{featureType:'road.arterial',elementType:'geometry',stylers:[{color:'#38495a'}]},{featureType:'transit',elementType:'geometry',stylers:[{color:'#243241'}]},{featureType:'water',elementType:'geometry',stylers:[{color:'#0b141b'}]},{featureType:'landscape',stylers:[{color:'#121a21'}]}];
-function loadGoogle(key){
-  if(!key)return Promise.resolve(false);
-  return new Promise(res=>{
-    const t=setTimeout(()=>res(false),6000);
-    window.gm_authFailure=()=>{clearTimeout(t);gmFailed=true;res(false);};
-    window.initLaunchMap=()=>{clearTimeout(t);try{gmap=new google.maps.Map($('gmap'),{center:{lat:42.345,lng:-71.1},zoom:15,disableDefaultUI:true,styles:NIGHT,backgroundColor:'#070d12'});window.gmTiles=new Promise(r=>{google.maps.event.addListenerOnce(gmap,'tilesloaded',()=>r(true));setTimeout(()=>r(false),4000);});res(true);}catch{res(false);}};
-    const s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key,callback:'initLaunchMap',loading:'async',v:'weekly'});s.onerror=()=>{clearTimeout(t);res(false);};document.head.append(s);
+function sceneCamera(i){
+  if(i===0)return fullCamera;
+  if(i===1)return fitted(day.parts[0].flatMap(l=>l.geometry),1.4,13.5);
+  if(i===2)return fitted([...run.geometry,...(rail.options[0]?.legs.flatMap(l=>l.geometry)||[])],1.4,15);
+  if(i===3)return fitted(day.parts.slice(2,6).flat(1).flatMap(l=>l.geometry),1.3,13.6);
+  if(i===4)return fitted([...bus.options[0].legs[0].geometry,...silver.options[0].legs[0].geometry],1.22,12.6);
+  return fullCamera;
+}
+function enterScene(i){
+  scene=i;sceneStartCamera=[...camera];sceneTarget=sceneCamera(i);$('tip').style.opacity=0;
+  $('studio').classList.toggle('on',i===7);$('final-brand').classList.toggle('on',i===7);
+  $('chapter').classList.toggle('hidden',i===7);$('panel').classList.remove('hidden');
+  if(i===0){
+    mode(null);title('The Boston challenge','Every station.<br>One <em>continuous clock.</em>');
+    setPanel(panel('The record to chase','<h2>Fastest time to travel to all Boston subway stations</h2><div class="rule"><b class="num">01</b><div><strong>Train doors close. Clock starts.</strong><small>Last platform reached. Clock stops. Every wait and foot transfer counts.</small></div></div><div class="rule"><b class="num">02</b><div><strong>Every required station.</strong><small>Stopping public-service rides earn visits. The supplied rules include Silver Line.</small></div></div><div class="rule"><b class="num">03</b><div><strong>Find the connections.</strong><small>Scheduled public transport or on foot. No taxis, bikes or private rides.</small></div></div>','SUPPLIED GUIDELINES'));
+    caption('The challenge is not drawing the shortest line.<br>It is catching the <b>right trains</b>, in the right order.');
+  }else if(i===1){
+    mode('ride');title('01 / Build the journey','From a shared route<br>to the <em>real train.</em>');
+    const l=day.legs[0],ev=dayEv.legs[0];
+    setPanel(panel('Build a connection',field('From',name(l.from))+field('To',name(l.to))+'<div class="ride-row"><span class="route-badge">D</span>Green-D<span class="time">'+fmt(ev.departure)+' → '+fmt(ev.arrival)+'</span></div>'+metric(dur(ev.travel_seconds),'ride · '+(l.stations?.length||0)+' station calls')+'<div class="subtle">Official MBTA shapes.<br>Calendar, platform and boarding restrictions preserved.</div><div class="button">Add to rehearsal</div>'));
+    caption('Ride follows the track. Hover reveals <b>station-by-station timing</b>.');
+  }else if(i===2){
+    mode('auto');title('02 / Think like a speedrunner','Two branches.<br><em>One short run.</em>');
+    const r=runEv.legs[0],railSeconds=railEv?railEv.summary.finish-railEv.legs[0].start_time:null;
+    setPanel(panel('Auto · compare arrivals','<h2>Fenway → Saint Mary’s Street</h2><div class="subtle" style="margin-bottom:20px">Same start clock. Rail and running, compared.</div><div class="comparison" id="run-choice"><div class="top"><span>Run <span class="best">FASTEST</span></span><b>'+dur(runEv.summary.finish-r.start_time)+'</b></div><small>'+(r.distance/1000).toFixed(2)+' km · Google pedestrian route<br>Includes entry / exit assumptions</small></div><div class="comparison"><div class="top"><span>Ride via Kenmore</span><b>'+dur(railSeconds)+'</b></div><small>Real departure + wait + transfer</small></div><div class="button" id="run-add">Choose the street shortcut</div>'));
+    caption('A few hundred metres on foot can beat a branch change.<br><b>Google streets</b> underneath. Pace-based estimate, not a train time.');
+  }else if(i===3){
+    mode('ride');title('03 / Price the hidden costs','A transfer is<br><em>part of the race.</em>');
+    const tr=transferEv.legs.find(l=>l.transfer?.street_level);
+    setPanel(panel('The next connections',day.parts.slice(2,6).flat().map((l,k)=>'<div class="mini-leg"><span class="route-badge" style="--c:'+color(l)+'">'+esc(l.mode==='run'?'RUN':l.route.replace('Green-',''))+'</span><div class="desc">'+esc(name(l.to))+'<small>from '+esc(name(l.from))+'</small></div></div>').join('')+'<div class="diff-plus"><b>Copley · '+dur(tr?.transfer_seconds)+'</b><br>Exit, cross the street, re-enter.<br><small>Estimated street-level change; GTFS forbids the in-station reversal.</small></div>'));
+    caption('No impossible platform change.<br>The plan <b>prices the street transfer</b> and recomputes the next train.');
+  }else if(i===4){
+    mode('bus');title('04 / Use the whole city','Skip the trunk.<br><em>Take the connector.</em>');
+    const b=busEv.legs[0],s=silverEv.legs[0];
+    setPanel(panel('A crosstown alternative','<h2>Forest Hills → Ashmont</h2><div class="ride-row"><span class="route-badge" style="--c:#997813">21</span>Orange → Red</div>'+metric(dur(b.travel_seconds),'bus ride · '+dur(b.wait_seconds)+' wait')+'<div class="subtle">Scheduled MBTA bus. Access walking included by the evaluator. A bus never earns station coverage.</div><div class="ride-row" style="border-top:1px solid #ffffff18;margin-top:18px"><span class="route-badge" style="--c:#7c878e">SL3</span>South Station → Chelsea</div><div class="subtle">'+dur(s.travel_seconds)+' scheduled ride · '+silverEv.silver_covered.length+' Silver stops, tracked separately.</div>'));
+    caption('An alternative to test, <b>not a guaranteed saving</b>.<br>Departure times decide whether the shortcut wins.');
+  }else if(i===5){
+    mode(null);title('05 / Recompute the whole day','One connected plan.<br><em>Every minute exposed.</em>');
+    setPanel(panel('Shared rehearsal · '+day.legs.length+' legs','<div id="live-legs"></div>'+metric(dur(dayEv.summary.elapsed),'planned duration, including preparation')+'<div class="subtle">'+dayEv.covered.length+' / '+network.rail_station_count+' imported rail stations.<br>This candidate is a rehearsal — not a complete record route. Silver and the official station inventory still require reconciliation.</div>'));
+    caption('Change one leg and the clock downstream changes with it.<br><b>Rides, waits, runs and transfers</b> — nothing silently disappears.');
+  }else if(i===6){
+    mode('auto');title('06 / Find wasted motion','The track you rode<br><em>twice has a cost.</em>');
+    const sc=analysis?.stretches.flatMap(s=>s.shortcuts||[]).find(s=>s.proposal);
+    setPanel(panel('Backtracking check',metric(dur(analysis?.backtrack_seconds),'re-ridden track · '+Math.round((analysis?.backtrack_share||0)*100)+'% of moving time')+'<div class="subtle">Dotted red = a segment already covered.<br>Search bus, rail and running alternatives against the same timetable.</div>'+(sc?'<div class="diff-minus">− legs '+esc(sc.proposal.removed_legs.join(', '))+'</div><div class="diff-plus">+ '+esc(sc.label)+'<br>Finish '+fmt(sc.proposal.finish_before)+' → '+fmt(sc.proposal.finish_after)+'</div><div class="button">Review · saves '+dur(sc.proposal.saves_seconds)+'</div>':'<div class="diff-minus">Repeated track does not automatically mean a faster shortcut exists.</div><div class="diff-plus">This rehearsal has no faster approved proposal at these times.</div>')+'<div class="proof"><i></i>Suggestions are proposals, not magic.</div>'));
+    caption('A speedrun is a sequence of <b>testable ideas</b>.<br>Keep the legal visits. Challenge the wasted motion.');
+  }else{
+    mode(null);$('panel').classList.add('hidden');caption(null);
+  }
+}
+function render(t){
+  elapsed=Math.max(0,Math.min(DURATION,t));
+  const i=Math.min(7,cuts.findIndex((v,k)=>k<8&&elapsed>=v&&elapsed<cuts[k+1]));
+  if(i>=0&&i!==scene)enterScene(i);
+  const local=elapsed-cuts[Math.max(0,scene)];
+  const k=ease(local/1.7);
+  let target=sceneTarget;
+  if(scene===2&&local>2.8)target=fitted(run.geometry,2.6,16.2);
+  const camK=scene===2&&local>2.8?ease((local-2.8)/1.7):k;
+  const start=scene===2&&local>2.8?sceneTarget:sceneStartCamera;
+  applyCamera(start.map((v,k)=>lerp(v,target[k],camK)));
+  for(const d of drawings){
+    const visible=elapsed>=d.start&&elapsed<d.end&&!groupHidden.has(d.group);
+    const f=visible?ease((elapsed-d.start)/d.duration):0;
+    if(f===1&&d.last===1){if(d.pencil)d.pencil.setAttribute('opacity',0);continue;}partial(d,f);
+  }
+  for(const d of dots)d.node.setAttribute('opacity',elapsed>=d.start&&!groupHidden.has(d.family)?ease((elapsed-d.start)/.5)*.94:0);
+  for(const l of labels)l.node.setAttribute('opacity',elapsed>=l.start&&elapsed<l.end?1:0);
+  document.querySelectorAll('.legend-item').forEach((n,j)=>n.classList.toggle('on',elapsed>=j*1.05+.5));
+  if(scene===0){scoreboard(28800,0);}
+  if(scene===1){
+    const ev=dayEv.legs[0],p=ease((elapsed-10.2)/2.3);scoreboard(lerp(ev.departure,ev.arrival,p),Math.round((day.legs[0].stations?.length||0)*p));
+    const s=ev.segments?.[5];if(s)tip(s.to,'<strong>'+esc(name(s.from))+' → '+esc(name(s.to))+'</strong>'+dur(s.seconds)+' · '+fmt(s.departure)+' → '+fmt(s.arrival)+'<br><small>Scheduled estimate · MBTA GTFS</small>',local>3.3&&local<5.5);
+  }
+  if(scene===2){mode(local>3.2?'run':'auto');$('run-choice')?.classList.toggle('selected',local>2.4);if($('run-add'))$('run-add').textContent=local>4.5?'Street shortcut added ✓':'Choose the street shortcut';scoreboard(runEv.summary.finish,dayEv.legs[0].stations.length);}
+  if(scene===3){const tr=transferEv.legs.find(l=>l.transfer?.street_level);tip('place-coecl','<strong>Copley · '+dur(tr?.transfer_seconds)+'</strong>Exit Boylston St → re-enter Dartmouth St<br><small>Estimated street-level transfer</small>',local>3.9);}
+  if(scene===5){
+    const index=Math.min(day.legs.length-1,Math.floor(local/7*day.legs.length));
+    const seen=new Set();for(let j=0;j<=index;j++)(dayEv.legs[j].stop_calls||[]).forEach(c=>{if(stations[c.station]?.kind!=='silver')seen.add(c.station);});
+    // The evaluator's coverage is authoritative; the display animation is only a progress proxy.
+    scoreboard(dayEv.legs[index].arrival,local>=7?dayEv.covered.length:Math.min(dayEv.covered.length,Math.round((index+1)/day.legs.length*dayEv.covered.length)));
+    const list=$('live-legs');if(list&&list.dataset.index!==String(index)){list.dataset.index=index;list.innerHTML=day.legs.slice(Math.max(0,index-3),index+1).map((l,j)=>miniLeg(l,dayEv.legs[Math.max(0,index-3)+j],Math.max(0,index-3)+j)).join('');}
+  }
+  if(scene>=6)scoreboard(dayEv.summary.finish,dayEv.covered.length);
+  $('timeline').style.width=(elapsed/DURATION*100)+'%';$('scrub').value=elapsed;$('position').textContent='0:'+String(Math.floor(elapsed)).padStart(2,'0')+' / 1:00';
+  if(elapsed>=60){playing=false;document.body.dataset.done='1';$('play').textContent='Replay';}
+}
+function tick(now){
+  if(playing&&ready)render(elapsed+(now-last)/1000);last=now;frame=requestAnimationFrame(tick);
+}
+function play(){if(!ready)return;if(elapsed>=60){elapsed=0;scene=-1;delete document.body.dataset.done;}last=performance.now();playing=true;$('play').textContent='Pause';}
+function pause(){playing=false;$('play').textContent='Play';}
+function wireControls(){
+  $('play').onclick=()=>playing?pause():play();$('replay').onclick=()=>{elapsed=0;scene=-1;delete document.body.dataset.done;render(0);play();};
+  $('scrub').oninput=e=>{pause();scene=-1;render(+e.target.value);};
+  document.querySelectorAll('#modes span').forEach((n,i)=>{n.tabIndex=0;n.role='button';n.setAttribute('aria-label','Jump to '+n.textContent+' scene');const fn=()=>{scene=-1;render([16,9,30,19.5][i]);play();};n.onclick=fn;n.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fn();}};});
+  document.querySelectorAll('.legend-item').forEach(n=>{n.tabIndex=0;n.role='button';n.setAttribute('aria-label','Toggle '+n.textContent);n.onclick=()=>{const f=n.dataset.line;groupHidden.has(f)?groupHidden.delete(f):groupHidden.add(f);render(elapsed);};n.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();n.click();}};});
+}
+const NIGHT=[
+  {elementType:'geometry',stylers:[{color:'#172737'}]},
+  {elementType:'labels.text.fill',stylers:[{color:'#748c9f'}]},
+  {elementType:'labels.text.stroke',stylers:[{color:'#142230'}]},
+  {featureType:'poi',stylers:[{visibility:'off'}]},
+  {featureType:'road',elementType:'geometry',stylers:[{color:'#263b4d'}]},
+  {featureType:'road',elementType:'geometry.stroke',stylers:[{color:'#1b2c3c'}]},
+  {featureType:'road.highway',elementType:'geometry',stylers:[{color:'#354a5c'}]},
+  {featureType:'transit',stylers:[{visibility:'off'}]},
+  {featureType:'water',elementType:'geometry',stylers:[{color:'#0b1722'}]},
+  {featureType:'landscape.natural',elementType:'geometry',stylers:[{color:'#182e32'}]}
+];
+async function loadGoogle(key){
+  if(!key)return false;
+  return new Promise(resolve=>{
+    let timer=setTimeout(()=>resolve(false),12000);
+    window.gm_authFailure=()=>{mapOK=false;clearTimeout(timer);$('gmap').style.opacity=0;resolve(false);};
+    window.initLaunchMap=()=>{
+      try{
+        googleMap=new google.maps.Map($('gmap'),{center:unproject(camera),zoom:camera[2],disableDefaultUI:true,clickableIcons:false,gestureHandling:'none',styles:NIGHT,backgroundColor:'#101b26',isFractionalZoomEnabled:true});
+        google.maps.event.addListenerOnce(googleMap,'tilesloaded',()=>{clearTimeout(timer);mapOK=true;resolve(true);});
+      }catch{clearTimeout(timer);resolve(false);}
+    };
+    const script=document.createElement('script');script.src='https://maps.googleapis.com/maps/api/js?'+new URLSearchParams({key,callback:'initLaunchMap',loading:'async',v:'weekly'});script.onerror=()=>{clearTimeout(timer);resolve(false);};document.head.append(script);
   });
 }
-async function googleRun(leg,ms=1600){
-  const ll=leg.geometry.map(p=>({lat:p[0],lng:p[1]}));const b=new google.maps.LatLngBounds();ll.forEach(p=>b.extend(p));
-  gmap.fitBounds(b,{top:120,bottom:90,left:80,right:80});
-  [leg.from,leg.to].forEach(id=>new google.maps.Marker({position:{lat:stations[id].point[0],lng:stations[id].point[1]},map:gmap,label:{text:names[id],color:'#eaf2f1',fontWeight:'700',fontSize:'13px'},icon:{path:google.maps.SymbolPath.CIRCLE,scale:7,fillColor:'#eaf2f1',fillOpacity:1,strokeColor:'#070d12',strokeWeight:2}}));
-  $('gmap').classList.add('on');await sleep(500);
-  gpoly=new google.maps.Polyline({map:gmap,path:[],strokeColor:'#b48cff',strokeOpacity:1,strokeWeight:6});
-  const halo=new google.maps.Polyline({map:gmap,path:[],strokeColor:'#070d12',strokeOpacity:.9,strokeWeight:10,zIndex:-1});
-  const t0=performance.now();await new Promise(r=>{const step=()=>{const k=ease(Math.min(1,(performance.now()-t0)/ms)),n=Math.max(2,Math.round(ll.length*k));gpoly.setPath(ll.slice(0,n));halo.setPath(ll.slice(0,n));if(k<1)requestAnimationFrame(step);else r();};step();});
-}
-
-/* ---- the film ---- */
-async function film(){
-  const [cfg,ride,xfer,railFR,street,bus21,bus109,bus8,sl3,day]=await Promise.all([
-    api('/api/config'),
-    path('place-alfcl','place-brntn',{route:'Red'}),
-    path('place-lake','place-hsmnl',{time:'09:00'}),
-    path('place-fenwy','place-smary',{time:'09:30'}).catch(()=>({options:[]})),
-    api('/api/foot-route?'+new URLSearchParams({from:'place-fenwy',to:'place-smary'})).catch(()=>null),
-    path('place-forhl','place-asmnl',{mode:'bus',time:'10:30'}),path('place-harsq','place-sull',{mode:'bus',time:'10:30'}).catch(()=>({options:[]})),path('place-rugg','place-kencl',{mode:'bus',time:'10:30'}).catch(()=>({options:[]})),
-    path('place-sstat','place-chels',{route:'743',time:'10:30'}),
-    fullDay()
-  ]);
-  let gm=await loadGoogle(cfg.google_maps_key);if(gm){gm=await window.gmTiles&&!gmFailed;}  // a referrer-restricted or invalid key never renders tiles: fall back to the SVG street route
-  const runLeg={mode:'run',from:'place-fenwy',to:'place-smary',geometry:street?street.geometry:[stations['place-fenwy'].point,stations['place-smary'].point],geometry_source:street?'google_routes':'straight_line_sketch',provider_seconds:street?.provider_seconds};
-  const [evRide,evX,evRun,evRail,evBus,evSl,evDay]=await Promise.all([evaluate(ride.options[0].legs),evaluate(xfer.options[0].legs,'09:00'),evaluate([runLeg],'09:30'),railFR.options[0]?evaluate(railFR.options[0].legs,'09:30'):null,evaluate(bus21.options[0].legs,'10:30'),evaluate(sl3.options[0].legs,'10:30'),evaluate(day.legs)]);
-  const analysis=api('/api/analyze',{date:DATE(),time:'08:00',legs:day.legs,assumptions:{run_pace:6}}).catch(()=>null);
-
-  /* 0.0 – 2.2 s  title (the live data loads behind it) */
-  const t0=performance.now();const at=ms=>sleep(Math.max(0,t0+ms-performance.now()));
-  await at(1400);$('title').hidden=true;
-
-  /* 2.2 – 8.0 s  the map draws itself, line by line, camera easing out from downtown */
-  const dt=xy([42.3555,-71.06]);target=fitAspect([dt[0]-6000,dt[1]-4000,12000,8000]);view=[...target];svg.setAttribute('viewBox',view.join(' '));
-  speed=0.035;target=fitAspect([...FULL]);
-  const groups=[['Red',['Red','Mattapan'],'Red Line'],['Orange',['Orange'],'Orange Line'],['Blue',['Blue'],'Blue Line'],['Green-B',['Green-B','Green-C','Green-D','Green-E'],'Green Line · 4 branches'],['741',['741','742','743','746','749','751'],'Silver Line']];
-  for(const [c,routes,name] of groups){
-    tag(name,colors[c]);
-    const ls=data.lines.filter(l=>routes.includes(l.route));
-    ls.forEach(l=>drawTrack(l,650));
-    await sleep(360);
-    data.stations.filter(s=>s.routes.some(r=>routes.includes(r))&&!layers.stations.querySelector(`[data-id="${s.id}"]`)).forEach(s=>{dot(s);layers.stations.lastChild.setAttribute('data-id',s.id);});
-    await sleep(340);
-  }
-  line(`<b>${data.rail_station_count}</b> rail stations · <b>${data.silver_station_count}</b> Silver Line stops · <b>${data.pattern_count}</b> stop patterns, straight from the MBTA timetable`);
-  tag(`${data.bus.routes.length} bus connector routes`,'#FFC72C');
-  for(const b of [bus21,bus109,bus8])if(b.options[0])drawLeg(b.options[0].legs[0],500,{color:'#FFC72C',dash:'2 7',width:3.5});
-  await at(8000);
-
-  /* 8.0 – 12.0 s  ride */
-  clear();line(null);speed=0.12;tag('Ride · the path follows the official shape',colors.Red);
-  flyTo(ride.options[0].legs[0].geometry,1.2);
-  const r=evRide.legs[0];
-  line(`Alewife → Braintree. Pick two stations or drag along the track; the evaluator boards the <b>real train</b>: ${fmt(r.departure)} → ${fmt(r.arrival)}.`);
-  stats([`<b>${dur(r.travel_seconds)}</b> scheduled`,`<b>${r.segments?.length?r.segments.length+1:ride.options[0].legs[0].stations.length}</b> station calls`,`trip <b>${esc(r.trip_id)}</b>`]);
-  await drawLeg(ride.options[0].legs[0],1400);label('place-alfcl');label('place-brntn');
-  const segs=r.segments||[];for(const s of [segs[5],segs[12]].filter(Boolean)){await tip(stations[s.to].point,`<b>${esc(names[s.from])} → ${esc(names[s.to])}</b>${dur(s.seconds)} · ${fmt(s.departure)} → ${fmt(s.arrival)}<br><small>hover any segment</small>`,650);}
-  await at(12000);
-
-  /* 12.0 – 15.5 s  transfer */
-  clear();tag('Transfers · GTFS pathways, priced honestly',colors['Green-B']);
-  const xl=xfer.options[0].legs;flyTo(xl.flatMap(l=>l.geometry),1.25);
-  const tr=evX.legs.find(l=>l.transfer?.street_level);
-  line(`Boston College → Heath Street. Copley forbids the in-station reversal, so the plan prices a <b>street-level transfer</b> instead of refusing.`);
-  stats([`<b>${xl.length-1}</b> transfer`,tr?`<b>${dur(tr.transfer_seconds)}</b> ${esc(tr.transfer.via_names?.join(' → ')||'exit · cross · re-enter')}`:'',`finish <b>${fmt(evX.summary.finish)}</b>`].filter(Boolean));
-  for(const l of xl)await drawLeg(l,800);
-  await tip(stations['place-coecl'].point,`<b>Copley</b>exit Boylston St, re-enter Dartmouth St<br><small>${tr?dur(tr.transfer_seconds):'3m'} · estimated street transfer</small>`,900);
-  await at(15500);
-
-  /* 15.5 – 20.0 s  run on real streets */
-  clear();tag('Run · Google street route',  '#b48cff');
-  const railMin=evRail?Math.round((evRail.summary.finish-evRail.legs[0].start_time)/60):null,runMin=Math.round(evRun.legs[0].travel_seconds/60);
-  line(`Fenway → Saint Mary's Street: two Green branches 270 m apart. Auto times a <b>street run</b> against the rail paths and puts the fastest first.`);
-  stats([`run <b>${dur(evRun.legs[0].travel_seconds)}</b> · ${(evRun.legs[0].distance/1000).toFixed(2)} km`,evRail?`rail <b>${railMin}m</b> via ${esc(names[evRail.legs[0].to])}`:'',street?`Google walking <b>${dur(street.provider_seconds)}</b>`:''].filter(Boolean));
-  if(gm){await googleRun(runLeg,1600);await at(19500);$('gmap').classList.remove('on');}
-  else{flyTo([stations['place-fenwy'].point,stations['place-smary'].point],2.2,2600,0.14);if(evRail)for(const l of railFR.options[0].legs)await drawLeg(l,500);await drawLeg(runLeg,1200);label('place-fenwy');label('place-smary');layers.labels.lastChild.setAttribute('y',xy(stations['place-smary'].point)[1]+view[2]/40);}
-  await at(20000);
-
-  /* 20.0 – 23.0 s  bus + silver */
-  clear();tag('Bus + Silver Line · legal connectors','#FFC72C');
-  const bl=bus21.options[0].legs[0],sll=sl3.options[0].legs[0];flyTo([...bl.geometry,...sll.geometry],1.15);
-  line(`Bus 21 jumps Orange → Red without the downtown trunk; SL3 rides to Chelsea with its own coverage count. Buses never count as stations.`);
-  stats([`bus 21 <b>${dur(evBus.legs[0].travel_seconds)}</b> + ${dur(evBus.legs[0].wait_seconds)} wait`,`SL3 <b>${dur(evSl.legs[0].travel_seconds)}</b> · ${evSl.silver_covered.length} Silver stops`]);
-  await drawLeg(bl,800);label('place-forhl');label('place-asmnl');tag('Silver Line · part of the record',colors['741']);await drawLeg(sll,800);label('place-chels');
-  await at(23000);
-
-  /* 23.0 – 27.6 s  the whole day */
-  clear();stats(null);tag('The whole day · every leg, live-timed','#8fd3c7');speed=0.08;target=fitAspect([...FULL]);
-  line(`${day.legs.length} legs, ${day.legs.filter(l=>l.mode==='run').length} of them on foot. Start ${fmt(evDay.legs[0].start_time)}, last platform <b>${fmt(evDay.summary.finish)}</b>.`);
-  const seen=new Set();clock(evDay.legs[0].start_time);count(0,data.rail_station_count);
-  for(const [i,l] of day.legs.entries()){drawLeg(l,260,{width:4.5});(l.stations||[l.from,l.to]).forEach(s=>{if(stations[s]?.kind!=='silver')seen.add(s);});clock(evDay.legs[i].arrival);count(Math.min(seen.size,evDay.covered.length),data.rail_station_count);await sleep(105);}
-  count(evDay.covered.length,data.rail_station_count);
-  const an=await analysis;
-  if(an&&an.repeated_pieces?.length){
-    const rep=new Set(an.repeated_pieces.map(p=>`${p.leg}:${p.segment}`));
-    evDay.legs.forEach((l,i)=>(l.segments||[]).forEach((s,k)=>{if(rep.has(`${i}:${k}`))layers.flash.append(el('polyline',{points:s.geometry.map(xy).join(' '),fill:'none',stroke:'#ff5a4e','stroke-width':3,'stroke-dasharray':'3 5','vector-effect':'non-scaling-stroke'}));}));
-    const sc=an.stretches.flatMap(s=>s.shortcuts).sort((a,b)=>(b.proposal?.saves_seconds||b.saves_seconds)-(a.proposal?.saves_seconds||a.saves_seconds))[0];
-    tag('Backtracking check · the speedrun view','#ff5a4e');
-    line(`<b>${dur(an.backtrack_seconds)}</b> of this plan re-rides track it already covered (dotted red).${sc?` Best shortcut: ${esc(sc.label)} — saves <b>${dur(sc.proposal?.saves_seconds||sc.saves_seconds)}</b>, one click to approve.`:''}`);
-  }
-  await at(27600);
-
-  /* 27.6 – 30.5 s  end card */
-  ['tag','line','clock','count','stats'].forEach(id=>$(id).hidden=true);$('end').hidden=false;
-  await at(30500);document.body.dataset.done='1';
-}
-async function fullDay(){
-  /* The rehearsal plan from the studio, rebuilt live from the timetable: every ride is the real option for its pair. */
-  const n=Object.fromEntries(data.stations.map(s=>[s.name,s.id]));
+async function fullDay(street){
+  const n=Object.fromEntries(network.stations.map(s=>[s.name,s.id]));
   const plan=[['Green-D','Union Square','Fenway'],['run','Fenway',"Saint Mary's Street"],['Green-C',"Saint Mary's Street",'Cleveland Circle'],['run','Cleveland Circle','Boston College'],['Green-B','Boston College','Copley'],['Green-E','Copley','Heath Street'],['run','Heath Street','Jackson Square'],['Orange','Jackson Square','Forest Hills'],['Orange','Forest Hills','Downtown Crossing'],['Red','Downtown Crossing','Ashmont'],['Mattapan','Ashmont','Mattapan'],['Mattapan','Mattapan','Ashmont'],['Red','Ashmont','Savin Hill'],['Red','Savin Hill','JFK/UMass'],['Red','JFK/UMass','Braintree'],['Red','Braintree','Downtown Crossing'],['Orange','Downtown Crossing','Oak Grove'],['Orange','Oak Grove','Sullivan Square'],['run','Sullivan Square','East Somerville'],['Green-E','East Somerville','Medford/Tufts'],['Green-E','Medford/Tufts','East Somerville'],['run','East Somerville','Union Square'],['Green-D','Union Square','Arlington'],['run','Arlington','Charles/MGH'],['Red','Charles/MGH','Alewife'],['Red','Alewife','Charles/MGH'],['run','Charles/MGH','Bowdoin'],['Blue','Bowdoin','Wonderland']];
   const parts=await Promise.all(plan.map(async([route,a,b])=>{
     const from=n[a],to=n[b];
-    if(route==='run')return [{mode:'run',from,to,geometry:[stations[from].point,stations[to].point],geometry_source:'straight_line_sketch'}];
-    const o=(await path(from,to,{route})).options;return (o.find(x=>x.legs.length===1)||o[0]).legs;
+    if(route==='run'){
+      let s=from==='place-fenwy'&&to==='place-smary'?street:null;
+      if(!s)try{s=await api('/api/foot-route?'+new URLSearchParams({from,to}));}catch{}
+      return [{mode:'run',from,to,geometry:s?.geometry||[stations[from].point,stations[to].point],geometry_source:s?'google_routes':'straight_line_sketch',...(s?{provider_seconds:s.provider_seconds}:{})}];
+    }
+    const opts=(await option(from,to,{route})).options;
+    if(!opts?.length)throw Error('No ride available for '+a+' → '+b);
+    return (opts.find(x=>x.legs.length===1)||opts[0]).legs;
   }));
-  return {legs:parts.flat()};
+  return {parts,legs:parts.flat()};
 }
-(async()=>{
-  try{
-    data=await api('/api/network');stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));
-    colors=Object.fromEntries([...data.routes,...(data.bus?.routes||[])].map(r=>[r.id,r.color]));names=Object.fromEntries(data.stations.map(s=>[s.id,s.name]));
-    boot();await film();
-  }catch(error){$('title').hidden=false;$('title').querySelector('p').textContent='Live data unavailable: '+error.message;document.body.dataset.done='1';}
-})();
+async function shareLink(){
+  const s={schema:1,name:'Boston rail rehearsal — launch film',dataset:network.manifest.sha256,ruleset:network.ruleset,date,time:'08:00',assumptions:{run_pace:6,walk_pace:12,buffer:60,access:60,station_change:120},legs:day.legs.map(l=>l.mode==='ride'?{mode:'ride',pattern:l.pattern,start:l.start,end:l.end}:{mode:l.mode,from:l.from,to:l.to})};
+  const bytes=new TextEncoder().encode(JSON.stringify(s));
+  const packed=await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
+  const code='z'+btoa(String.fromCharCode(...new Uint8Array(packed))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
+  return '/#share='+code;
+}
+async function prepare(){
+  network=await api('/api/network');stations=Object.fromEntries(network.stations.map(s=>[s.id,s]));colors=Object.fromEntries(network.routes.map(r=>[r.id,r.color]));date=network.dates.includes('2026-10-26')?'2026-10-26':network.dates[0];boot();
+  const [cfg,street]=await Promise.all([api('/api/config'),api('/api/foot-route?from=place-fenwy&to=place-smary').catch(()=>null)]);
+  const gPromise=loadGoogle(cfg.google_maps_key);
+  [day,rail,bus,silver,transfer]=await Promise.all([fullDay(street),option('place-fenwy','place-smary',{time:'09:30'}),option('place-forhl','place-asmnl',{mode:'bus',time:'10:30'}),option('place-sstat','place-chels',{route:'743',time:'10:30'}),option('place-lake','place-hsmnl',{time:'09:00'})]);
+  run=day.parts[1][0];
+  [dayEv,runEv,railEv,busEv,silverEv,transferEv,analysis]=await Promise.all([evaluate(day.legs),evaluate([run],'09:30'),rail.options[0]?evaluate(rail.options[0].legs,'09:30'):null,evaluate(bus.options[0].legs,'10:30'),evaluate(silver.options[0].legs,'10:30'),evaluate(transfer.options[0].legs,'09:00'),api('/api/analyze',{date,time:'08:00',legs:day.legs}).catch(()=>null)]);
+  sharedURL=await shareLink();
+  const iframe=$('studio-frame');iframe.src=sharedURL;
+  // The final reveal is the real, unmodified studio, not a recreated dashboard.
+  await Promise.all([gPromise,new Promise(resolve=>{iframe.addEventListener('load',resolve,{once:true});setTimeout(resolve,15000);})]);
+  buildDrawings();wireControls();ready=true;document.body.dataset.ready='1';document.body.dataset.map=mapOK?'google':'vector';$('play').disabled=false;
+  $('loading').innerHTML='<b>Rehearsal ready · '+date+'</b>'+(mapOK?'Google Maps + live MBTA timetable.':'Vector map · Google Maps unavailable.')+'<br><button id="begin">Play the 60-second film</button>';
+  $('begin').onclick=()=>{$('loading').classList.add('hidden');play();};
+  render(0);requestAnimationFrame(tick);
+  window.launchFilm={start(){document.body.classList.add('recording');$('loading').classList.add('hidden');elapsed=0;scene=-1;render(0);play();},pause,play,seek(t){pause();scene=-1;render(t);},get status(){return {ready,map:mapOK?'google':'vector',seconds:elapsed,playing,date,legs:day.legs.length,coverage:dayEv.covered.length,finish:dayEv.summary.finish,street:run.geometry_source,sharedURL};}};
+  if(!params.has('manual')&&!matchMedia('(prefers-reduced-motion: reduce)').matches){$('loading').classList.add('hidden');play();}
+}
+prepare().catch(error=>{
+  $('loading').innerHTML='<b id="error">Could not prepare this rehearsal</b>'+esc(error.message)+'<br><button id="retry">Retry live data</button>';
+  $('retry').onclick=()=>location.reload();document.body.dataset.error='1';console.error(error);
+});
