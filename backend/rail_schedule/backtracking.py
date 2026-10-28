@@ -14,6 +14,7 @@ from .itinerary import clock, distance
 RUN_DETOUR = 1.25  # Straight-line → street distance factor for the run estimate; previewing fetches the real route.
 MAX_RUN_METERS = 3500
 MAX_SUGGESTIONS = 3
+MIN_SHORTCUT_SECONDS = 240
 
 
 def edge(a, b):
@@ -221,7 +222,8 @@ def analyze(network, scenario):
     runs = stretches(flat, result)
     assumptions = scenario.get('assumptions') or {}  # Already validated by evaluate(); shortcuts must use the same costs.
     for s in runs:
-        s['shortcuts'] = shortcuts(network, s, str(scenario.get('date', '')), assumptions)
+        # Shortcut search evaluates several alternatives per stretch; very short repeats (a station or two) are not worth it.
+        s['shortcuts'] = shortcuts(network, s, str(scenario.get('date', '')), assumptions) if s['elapsed_seconds'] >= MIN_SHORTCUT_SECONDS else []
         s['best_saving_seconds'] = s['shortcuts'][0]['saves_seconds'] if s['shortcuts'] else 0
     ridden = [p for p in flat if not p.get('gap')]
     moving = sum(p['seconds'] for p in ridden)

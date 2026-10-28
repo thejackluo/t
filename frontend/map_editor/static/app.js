@@ -58,8 +58,11 @@ function autosave(){if(viewer)return;try{localStorage.setItem(CURRENT,JSON.strin
 const SHARE='#share=';
 function shareable(){
   const s=serializable();
-  s.legs=s.legs.map(l=>l.mode==='ride'?{id:l.id,mode:'ride',pattern:l.pattern,start:l.start,end:l.end}
-    :{id:l.id,mode:l.mode,from:l.from,to:l.to,geometry:l.geometry,geometry_source:l.geometry_source});
+  /* Keep links short enough to survive chat apps: no ids/notes, and only hand-drawn foot geometry travels (sketches are re-drawn from the stations). */
+  s.legs=s.legs.map(l=>l.mode==='ride'?{mode:'ride',pattern:l.pattern,start:l.start,end:l.end}
+    :l.geometry_source==='user_drawn'?{mode:l.mode,from:l.from,to:l.to,geometry:l.geometry.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]),geometry_source:'user_drawn'}
+    :{mode:l.mode,from:l.from,to:l.to});
+  delete s.id;delete s.saved;
   return s;
 }
 const b64url={
@@ -72,12 +75,27 @@ async function encodeShare(value){
   const packed=await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer();
   return 'z'+b64url.encode(new Uint8Array(packed));
 }
-async function decodeShare(text){
-  const bytes=b64url.decode(text.slice(1));
-  if(text[0]==='j')return JSON.parse(new TextDecoder().decode(bytes));
-  if(text[0]!=='z')throw Error('Unknown link format.');
-  if(!('DecompressionStream' in window))throw Error('This browser cannot open compressed share links; use a current Chrome, Edge, Safari or Firefox.');
-  return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
+async function decodeShare(raw){
+  /* Chat apps and URL bars add or mangle characters around long fragments: keep only the link alphabet, and if the
+     tail was damaged retry without the last few characters before giving up. */
+  const text=decodeURIComponent(raw).replace(/[^A-Za-z0-9_\-]/g,'');
+  if(text[0]!=='j'&&text[0]!=='z')throw Error('Unknown link format.');
+  if(text[0]==='z'&&!('DecompressionStream' in window))throw Error('This browser cannot open compressed share links; use a current Chrome, Edge, Safari or Firefox.');
+  let lastError;
+  for(let trim=0;trim<=4;trim++){
+    try{
+      const bytes=b64url.decode(text.slice(1,text.length-trim));
+      if(text[0]==='j')return JSON.parse(new TextDecoder().decode(bytes));
+      return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());
+    }catch(error){lastError=error;}
+  }
+  throw Error(`${lastError.message}. The link was probably cut or altered when it was copied; ask for it again or use Import JSON.`);
+}
+function inflateShared(shared){
+  /* Foot legs travel without sketch geometry; rebuild the straight-line sketch and ids the editor expects. */
+  shared.legs=shared.legs.map(l=>({id:uid(),...l,...(l.mode!=='ride'&&!l.geometry?{geometry:[stations[l.from].point,stations[l.to].point],geometry_source:'straight_line_sketch'}:{})}));
+  shared.id=shared.id||uid();
+  return shared;
 }
 function enterViewer(on){
   viewer=on;document.body.classList.toggle('viewer',on);$('viewer-banner').hidden=!on;
@@ -197,18 +215,24 @@ async function suggestStreets(index){
   mutate(()=>{Object.assign(scenario.legs[index],{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});});
   notify(`Street route loaded: ${(route.provider_distance/1000).toFixed(2)} km, Google walking estimate ${duration(route.provider_seconds)}. Session-only; inspect entrances.`);
 }
-async function analyzeBacktracking(){
-  /* Speedrun check: which pieces are ridden twice, and what bus/Silver/rail/run shortcut would skip each repeated stretch. */
+const AUTO_ANALYZE_LEGS=8;
+async function analyzeBacktracking(force=false){
+  /* Speedrun check: which pieces are ridden twice, and what bus/Silver/rail/run shortcut would skip each repeated stretch.
+     The shortcut search evaluates many alternatives, so long plans only run it on request to keep Auto previews fast. */
   const serial=++analysisSerial;
   if(scenario.legs.length<2){analysis=null;renderAnalysis();return;}
+  if(!force&&scenario.legs.length>AUTO_ANALYZE_LEGS){analysis=null;renderAnalysis();return;}
+  $('backtrack-run').disabled=true;$('backtrack-run').textContent='Checking…';
   try{const result=await request('/api/analyze',scenario);if(serial!==analysisSerial)return;analysis=result;}
-  catch(error){if(serial!==analysisSerial)return;analysis=null;}
+  catch(error){if(serial!==analysisSerial)return;analysis=null;if(force)notify('Backtracking check failed: '+error.message,'error');}
+  finally{if(serial===analysisSerial){$('backtrack-run').disabled=false;$('backtrack-run').textContent='Check backtracking →';}}
   renderAnalysis();renderMap();
 }
 function renderAnalysis(){
   const box=$('backtracking');
-  if(!analysis||!scenario.legs.length){box.hidden=true;return;}
-  box.hidden=false;
+  if(scenario.legs.length<2||viewer&&!analysis){box.hidden=true;return;}
+  box.hidden=false;$('backtrack-run').hidden=false;
+  if(!analysis){$('backtrack-total').textContent='Not checked yet';$('backtrack-summary').textContent=`Plans longer than ${AUTO_ANALYZE_LEGS} legs are checked on request so previews stay fast.`;$('backtrack-list').innerHTML='';return;}
   const pct=Math.round(analysis.backtrack_share*100);
   $('backtrack-total').textContent=analysis.backtrack_seconds?`${duration(analysis.backtrack_seconds)} re-ridden · ${pct}% of moving time`:'No backtracking';
   $('backtrack-summary').textContent=analysis.backtrack_seconds?`${analysis.stretches.length} repeated stretch${analysis.stretches.length===1?'':'es'} · ${analysis.repeated_station_visits} repeated station visits${analysis.potential_saving_seconds?` · shortcuts below could save about ${duration(analysis.potential_saving_seconds)}`:' · no faster bus, Silver, rail or run shortcut found for these stretches'}. Any piece ridden again after it was already traversed counts; shortcut times use the timetable from the moment you leave the stretch start.`:'Every piece of this plan covers new ground.';
@@ -300,7 +324,12 @@ async function demo(){
 }
 
 async function boot(){
-  [data,config]=await Promise.all([request('/api/network'),request('/api/config')]);
+  try{[data,config]=await Promise.all([request('/api/network'),request('/api/config')]);}
+  catch(error){
+    // Never a blank page: the data function may be cold-starting on a shared link; offer a retry.
+    $('message').hidden=false;$('message').dataset.kind='error';$('message').innerHTML=`${esc('Could not load the schedule data: '+error.message)} <button class="text-button" onclick="location.reload()">Retry</button>`;
+    throw error;
+  }
   stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));const allRoutes=[...data.routes,...(data.bus?.routes||[])];colors=Object.fromEntries(allRoutes.map(r=>[r.id,r.color]));routeNames=Object.fromEntries(allRoutes.map(r=>[r.id,r.name||r.id]));
   const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
   scenario={schema:1,id:uid(),name:'Boston rail rehearsal',dataset:data.manifest.sha256,ruleset:data.ruleset,
@@ -308,7 +337,7 @@ async function boot(){
   try{const stored=JSON.parse(localStorage.getItem(CURRENT)||'null');if(stored){validateScenario(stored);scenario=stored;}}catch(error){notify('Saved draft could not be loaded: '+error.message,'error');}
   if(location.hash.startsWith(SHARE)){
     try{
-      const shared=await decodeShare(location.hash.slice(SHARE.length));validateScenario(shared);
+      const shared=inflateShared(await decodeShare(location.hash.slice(SHARE.length)));validateScenario(shared);
       const checked=await request('/api/evaluate',shared);
       scenario={...shared,legs:checked.legs.map(canonicalLeg)};enterViewer(true);
     }catch(error){notify('Shared link could not be opened: '+error.message,'error');}
@@ -355,6 +384,7 @@ async function boot(){
   });
   on('forget-key','click',()=>{storedKey(null);$('google-feedback').textContent='Saved key removed from this browser. Reload to return to the track preview.';});
   on('coverage-open','click',()=>{renderCoverage();$('coverage-dialog').showModal();});
+  on('backtrack-run','click',()=>analyzeBacktracking(true));
   on('backtrack-list','click',e=>{const b=e.target.closest('.shortcut');if(!b)return;const radio=document.querySelector(`[name=mode][value=${b.dataset.mode}]`);if(radio){radio.checked=true;$('find-routes').textContent=previewLabel();}replaceIndex=-1;footIndex=-1;setEndpoint('from',b.dataset.from);setEndpoint('to',b.dataset.to);return findPaths();});
   on('coverage-list','click',e=>{const id=e.target.closest('[data-station]')?.dataset.station;if(id){$('coverage-dialog').close();pickStation(id);}});
   on('share-link','click',async()=>{
