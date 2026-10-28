@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>T Run · MBTA Route Studio — guided demo</title>
+<style>
+:root{--ink:#182b3b;--muted:#8da0ab;--accent:#126a61;--paper:#0f1a22;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:#eaf2f1}
+*{box-sizing:border-box}body{margin:0;background:#0b141b;overflow:hidden}
+#stage{position:fixed;inset:0;background:radial-gradient(1200px 800px at 60% 40%,#132431,#0b141b)}
+#stage svg{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#stage svg:active{cursor:grabbing}
+.topbar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;padding:16px 22px;pointer-events:none}
+.topbar>*{pointer-events:auto}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-.5px;font-size:18px}
+.brand i{border:3px solid #eaf2f1;border-radius:50%;width:34px;height:34px;display:grid;place-items:center;font-style:normal;font-size:22px}
+.brand small{display:block;font-weight:500;font-size:11px;color:var(--muted);letter-spacing:0}
+.controls{display:flex;gap:6px;align-items:center}
+button{font:inherit;background:#ffffff14;color:#eaf2f1;border:1px solid #ffffff2a;border-radius:8px;padding:8px 11px;cursor:pointer;font-weight:650;font-size:12px;backdrop-filter:blur(6px)}
+button:hover{background:#ffffff26}button[aria-pressed=true]{background:var(--accent);border-color:var(--accent)}
+.caption{position:fixed;left:22px;bottom:92px;max-width:460px;background:#0f1a22e6;border:1px solid #ffffff1f;border-radius:14px;padding:18px 20px;box-shadow:0 20px 60px #0008;backdrop-filter:blur(8px);transition:opacity .4s,transform .4s}
+.caption[hidden]{display:block;opacity:0;transform:translateY(8px);pointer-events:none}
+.caption .eyebrow{font-size:10px;letter-spacing:1.6px;color:#8fd3c7;font-weight:750}
+.caption h2{margin:6px 0 8px;font-size:22px;letter-spacing:-.6px;line-height:1.15}
+.caption p{margin:0;font-size:13px;line-height:1.55;color:#c9d7d8}
+.caption .stat{display:inline-block;margin:10px 8px 0 0;padding:5px 9px;border-radius:7px;background:#ffffff12;font-size:12px;font-weight:650}
+.caption .stat b{color:#8fd3c7}
+.chapters{position:fixed;left:22px;right:22px;bottom:22px;display:flex;gap:6px;align-items:center}
+.chapters .track{flex:1;height:6px;background:#ffffff1f;border-radius:3px;overflow:hidden;cursor:pointer;position:relative}
+.chapters .track i{position:absolute;left:0;top:0;bottom:0;background:#8fd3c7;width:0}
+.chapters .dots{display:flex;gap:4px}
+.chapters .dots button{padding:6px 9px;font-size:11px}
+.legend{position:fixed;right:22px;bottom:92px;display:flex;flex-direction:column;gap:5px;font-size:11px;color:#c9d7d8;background:#0f1a22b8;padding:10px 12px;border-radius:10px;border:1px solid #ffffff1a}
+.legend span:before{content:'';display:inline-block;width:14px;height:3px;background:var(--c);vertical-align:middle;margin-right:7px;border-radius:2px}
+.legend span[data-dash]:before{background:repeating-linear-gradient(90deg,var(--c) 0 4px,transparent 4px 7px)}
+.hint{position:fixed;top:70px;right:22px;font-size:11px;color:var(--muted);background:#0f1a22b8;padding:6px 10px;border-radius:8px;border:1px solid #ffffff1a}
+.tip{position:fixed;pointer-events:none;background:#eaf2f1;color:#182b3b;font-size:12px;line-height:1.4;padding:7px 10px;border-radius:8px;box-shadow:0 6px 20px #0006;max-width:240px;transition:opacity .25s}
+.tip b{display:block}.tip small{color:#5d7079}
+.station-label{font-size:11px;fill:#eaf2f1;paint-order:stroke;stroke:#0b141b;stroke-width:3px;stroke-linejoin:round;pointer-events:none}
+.mode-badge{position:fixed;top:70px;left:22px;display:flex;gap:4px;background:#0f1a22b8;padding:5px;border-radius:10px;border:1px solid #ffffff1a}
+.mode-badge span{padding:6px 10px;border-radius:7px;font-size:12px;font-weight:650;color:#9fb1b8}
+.mode-badge span[data-on]{background:#eaf2f1;color:#0f1a22}
+.diffcard{margin-top:10px;border-left:3px solid #8fd3c7;padding:4px 10px;font-size:12px;line-height:1.6}
+.diffcard .minus{color:#ff9c8f}.diffcard .plus{color:#8fd3c7}
+@media(max-width:700px){.caption{left:12px;right:12px;max-width:none;bottom:84px}.legend,.hint{display:none}.chapters{left:12px;right:12px}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div class="topbar">
+  <div class="brand"><i>T</i><div>T Run · Route Studio<small>Guided demo · every time shown is real MBTA GTFS schedule data</small></div></div>
+  <div class="controls">
+    <button id="play" aria-pressed="true">⏸ Pause</button>
+    <button id="prev">‹ Prev</button>
+    <button id="next">Next ›</button>
+    <button id="fit">⤢ Fit</button>
+    <a href="/" style="text-decoration:none"><button>Open the studio →</button></a>
+  </div>
+</div>
+<div class="mode-badge" id="modes"><span data-mode="auto">⚡ Auto</span><span data-mode="ride">▰ Ride</span><span data-mode="bus">▭ Bus</span><span data-mode="run">↗ Run</span><span data-mode="silver">▰ Silver</span></div>
+<div class="hint">Drag to pan · scroll to zoom · hover a segment for its scheduled time</div>
+<div class="legend" id="legend"></div>
+<div class="caption" id="caption" hidden><div class="eyebrow" id="cap-eyebrow"></div><h2 id="cap-title"></h2><p id="cap-text"></p><div id="cap-extra"></div></div>
+<div class="chapters"><div class="dots" id="dots"></div><div class="track" id="track"><i id="progress"></i></div></div>
+<div class="tip" id="tip" style="opacity:0"></div>
+<script type="module" src="/demo.js"></script>
+</body>
+</html>
