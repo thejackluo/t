@@ -215,6 +215,20 @@ async function suggestStreets(index){
   mutate(()=>{Object.assign(scenario.legs[index],{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});});
   notify(`Street route loaded: ${(route.provider_distance/1000).toFixed(2)} km, Google walking estimate ${duration(route.provider_seconds)}. Session-only; inspect entrances.`);
 }
+async function streetRoutesForSketches(){
+  /* Every run/walk leg that is only a straight-line sketch gets its Google street route (session-only), then the plan
+     is re-timed once. Used when a shared link or saved scenario loads; failures leave the sketch and say so. */
+  const sketches=scenario.legs.filter(l=>l.mode!=='ride'&&l.geometry_source==='straight_line_sketch');
+  if(!sketches.length)return;
+  let failed=0;
+  await Promise.all(sketches.map(async leg=>{
+    try{const route=await streetRoute(leg.from,leg.to);const live=scenario.legs.find(l=>l.id===leg.id);
+      if(live)Object.assign(live,{geometry:route.geometry,geometry_source:'google_routes',provider_seconds:route.provider_seconds});}
+    catch{failed++;}
+  }));
+  evaluation=null;render();evaluate();
+  if(failed)notify(`${failed} running link${failed===1?'':'s'} stay straight-line sketches: street routing is unavailable here.`,'error');
+}
 const AUTO_ANALYZE_LEGS=8;
 async function analyzeBacktracking(force=false){
   /* Speedrun check: which pieces are ridden twice, and what bus/Silver/rail/run shortcut would skip each repeated stretch.
@@ -317,7 +331,7 @@ function validateScenario(candidate){
 }
 async function loadScenario(candidate){
   validateScenario(candidate);const checked=await request('/api/evaluate',candidate);
-  mutate(()=>{scenario={...clone(candidate),legs:checked.legs.map(canonicalLeg)};});syncInputs();resetEndpoints();map.fit();
+  mutate(()=>{scenario={...clone(candidate),legs:checked.legs.map(canonicalLeg)};});syncInputs();resetEndpoints();map.fit();streetRoutesForSketches();
 }
 async function demo(){
   notify('Building a track-following example with a rail transfer and outdoor run…');
@@ -345,6 +359,7 @@ async function boot(){
       const shared=inflateShared(await decodeShare(location.hash.slice(SHARE.length)));validateScenario(shared);
       const checked=await request('/api/evaluate',shared);
       scenario={...shared,legs:checked.legs.map(canonicalLeg)};enterViewer(true);
+      streetRoutesForSketches();  // Links carry no Google geometry; fetch the street routes so runs are not straight lines.
     }catch(error){notify('Shared link could not be opened: '+error.message,'error');}
   }
   const stationList=[...data.stations].sort((a,b)=>a.name.localeCompare(b.name));
