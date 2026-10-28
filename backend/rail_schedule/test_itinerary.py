@@ -357,6 +357,20 @@ class BacktrackingTests(unittest.TestCase):
         self.assertEqual((bus['label'], bus['target'], bus['then']['from'], bus['then']['to']), ('21', 'place-asmnl', 'place-asmnl', 'place-jfk'))
         self.assertGreater(bus['saves_seconds'], 0)
         self.assertEqual(bus['seconds'] + bus['then']['seconds'] + bus['saves_seconds'], last['reverse']['arrives'] - last['leaves'])
+        self.assertGreaterEqual(bus['then']['departure'], last['leaves'] + bus['seconds'])  # A real reverse train after the bus arrives.
+        from backend.rail_schedule.backtracking import evaluated
+        two_rides = self.n.options('place-forhl', 'place-asmnl', '2026-10-22', '', '09:30')['options'][0]
+        quick = evaluated(self.n, two_rides, '2026-10-22', 34200, {}, 'ride')
+        slow = evaluated(self.n, two_rides, '2026-10-22', 34200, {'buffer': 1800}, 'ride')
+        # Shortcuts are priced with the scenario's own transfer buffer: a 30-minute buffer forces a later connecting train.
+        self.assertGreater(slow['wait_seconds'], quick['wait_seconds'])
+        self.assertGreaterEqual(slow['seconds'] - quick['seconds'], 600)
+
+    def test_unavailable_rides_are_not_traversed_track(self):
+        from backend.rail_schedule.backtracking import analyze
+        legs = self.legs('place-alfcl', 'place-brntn', 'Red', '08:00') + self.legs('place-brntn', 'place-alfcl', 'Red', '09:30')
+        report = analyze(self.n, {'date': '2026-10-22', 'time': '25:30', 'legs': legs})  # Service has ended: both rides unavailable.
+        self.assertEqual((report['moving_seconds'], report['backtrack_seconds'], report['stretches']), (0, 0, []))
         self.assertEqual(report['potential_saving_seconds'], sum(s['best_saving_seconds'] for s in report['stretches']))
 
     def test_run_shortcut_is_a_labelled_straight_line_estimate(self):
