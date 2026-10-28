@@ -72,6 +72,7 @@ These work packages define the delivery and verification checklist for ongoing i
 
 - **Silver Line:** required by the supplied rules for the full attempt. SL1–SL5/SLW are built into the schedule and ride like any line, with Silver coverage tracked separately from the 125 rail stations because the Silver visit rule still awaits clarification. Rail-only results must be labelled **rehearsals**.
 - **Buses:** the supplied rules allow scheduled public transport between lines, so direct MBTA bus connectors between two stations are offered (Bus mode, and in Auto) with the walk to/from the stop estimated; a bus never earns station coverage.
+- **Backtracking check:** the studio measures how much of a plan re-rides track already covered (speedrun style), lists each repeated stretch, and suggests bus, Silver, rail or run shortcuts with the time each saves — including jumping to the far end of the next new stretch and riding it in reverse.
 - **Optimization:** search for better routes after the same evaluator can validate a manual baseline.
 - **Attempt day:** offline instructions, observations/evidence logging, and optional live predictions.
 
