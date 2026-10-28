@@ -11,6 +11,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const api=async(path,body)=>{const r=await fetch(path,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:undefined);const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j;};
 const DATE=()=>{const d=new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});return data.dates.includes(d)?d:data.dates[0];};
 
+const LAUNCH=new URLSearchParams(location.search).has('launch');
 let data,stations,colors,names={},svg,view,target,playing=true,chapter=0,runToken=0,hoverSegments=[];
 const layers={};
 
@@ -22,7 +23,7 @@ function boot(){
   const full=[Math.min(...xs)-2000,Math.min(...ys)-1500,Math.max(...xs)-Math.min(...xs)+4000,Math.max(...ys)-Math.min(...ys)+3000];
   view=[...full];target=[...full];svg.setAttribute('viewBox',view.join(' '));
   data.lines.forEach(l=>layers.tracks.append(el('polyline',{points:l.geometry.map(xy).join(' '),fill:'none',stroke:colors[l.route]||'#888','stroke-width':2.2,opacity:.45,'stroke-linecap':'round','stroke-linejoin':'round','vector-effect':'non-scaling-stroke'})));
-  data.stations.forEach(s=>{const p=xy(s.point);layers.stations.append(el('circle',{cx:p[0],cy:p[1],r:s.routes.length>1?110:70,fill:s.kind==='silver'?'#7C878E':'#eaf2f1',stroke:'#0b141b','stroke-width':1.5,'vector-effect':'non-scaling-stroke','data-station':s.id}));});
+  data.stations.forEach(s=>{const p=xy(s.point);layers.stations.append(el('circle',{cx:p[0],cy:p[1],r:s.routes.length>1?110:70,'data-r':s.routes.length>1?110:70,fill:s.kind==='silver'?'#7C878E':'#eaf2f1',stroke:'#0b141b','stroke-width':1.5,'vector-effect':'non-scaling-stroke','data-station':s.id}));});
   $('legend').innerHTML=[['Red',colors.Red],['Orange',colors.Orange],['Blue',colors.Blue],['Green',colors['Green-B']],['Silver Line',colors['741']],['Bus connector','#FFC72C','dash'],['Run / walk','#b48cff','dash'],['Backtracking','#ff5a4e','dash']].map(([n,c,d])=>`<span style="--c:${c}" ${d?'data-dash':''}>${n}</span>`).join('');
   controls();requestAnimationFrame(tick);
   window.FULL=full;
@@ -30,7 +31,9 @@ function boot(){
 function tick(){
   const k=0.085;let moved=false;
   for(let i=0;i<4;i++){const d=target[i]-view[i];if(Math.abs(d)>0.5){view[i]+=d*k;moved=true;}}
-  if(moved)svg.setAttribute('viewBox',view.join(' '));
+  if(moved){svg.setAttribute('viewBox',view.join(' '));
+    const k=Math.min(1,Math.max(0.22,view[2]/window.FULL[2]));  // station dots shrink as the camera zooms in
+    layers.stations.querySelectorAll('circle').forEach(c=>c.setAttribute('r',(+c.dataset.r)*k));}
   requestAnimationFrame(tick);
 }
 function flyTo(points,pad=1.35,minW=9000){
@@ -63,13 +66,14 @@ function hover(e){
   if(!t){tip.style.opacity=0;return;}
   tip.innerHTML=t.dataset.tip;tip.style.opacity=1;tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY+14)+'px';
 }
-function caption(eyebrow,title,text,extra=''){
-  const c=$('caption');c.hidden=true;
+function caption(eyebrow,title,text,extra='',side=false){
+  const c=$('caption');c.hidden=true;c.classList.toggle('side',LAUNCH&&side);
   setTimeout(()=>{$('cap-eyebrow').textContent=eyebrow;$('cap-title').textContent=title;$('cap-text').innerHTML=text;$('cap-extra').innerHTML=extra;c.hidden=false;},180);
 }
 function modes(on){document.querySelectorAll('#modes span').forEach(s=>{if(s.dataset.mode===on)s.setAttribute('data-on','');else s.removeAttribute('data-on');});}
 function clear(){layers.legs.innerHTML='';layers.flash.innerHTML='';layers.labels.innerHTML='';}
 function label(id){const s=stations[id];if(!s)return;const p=xy(s.point);layers.labels.append(el('text',{x:p[0]+140,y:p[1]-90,class:'station-label'},s.name));}
+async function popAside(token,ms=2600){if(!LAUNCH)return;await sleep(ms);if(token!==runToken)return;$('caption').classList.add('side');}
 async function drawLeg(leg,evaluated,token,{color,dash,ms=1400}={}){
   /* The polyline draws itself along the official shape; segment hit areas carry the scheduled time for hover. */
   const pts=leg.geometry.map(xy);const stroke=color||(leg.mode==='ride'?colors[leg.route]:'#b48cff');
@@ -119,7 +123,7 @@ const CHAPTERS=[
    flyTo(legs.flatMap(l=>l.geometry),1.25);
    caption('02 · RIDE MODE',`Alewife → Braintree on the Red Line`,`Click two stations — or drag along the track — and the path follows the official shape. The evaluator picks the real train: board ${fmt(ev.legs[0].departure)}, arrive ${fmt(ev.legs[0].arrival)}, ${ev.legs[0].stop_calls?.length||legs[0].stations.length} station calls.`,
      `<span class="stat"><b>${dur(ev.legs[0].travel_seconds)}</b> scheduled ride</span><span class="stat"><b>${dur(ev.legs[0].wait_seconds)}</b> wait</span><span class="stat">trip <b>${esc(ev.legs[0].trip_id)}</b></span>`);
-   hoverSegments=[];await drawLeg(legs[0],ev.legs[0],t,{ms:2600});if(t!==runToken)return;
+   hoverSegments=[];await popAside(t);await drawLeg(legs[0],ev.legs[0],t,{ms:2600});if(t!==runToken)return;
    await sleep(400);await pulseSegments(t,4);await sleep(1200);}},
  {title:'Transfers, platforms, street-level changes',async run(t){
    modes('ride');clear();
@@ -128,7 +132,7 @@ const CHAPTERS=[
    const tr=ev.legs.find(l=>l.transfer?.street_level);
    caption('03 · TRANSFERS',`Boston College → Heath Street`,`Multi-ride paths use GTFS directed transfers and pathways. Where the feed forbids an in-station change (Copley's reversal), the plan prices an <b>estimated street-level transfer</b> — exit, cross, re-enter — instead of refusing.`,
      `<span class="stat"><b>${legs.length-1}</b> transfer${legs.length===2?'':'s'}</span>${tr?`<span class="stat"><b>${dur(tr.transfer_seconds)}</b> ${esc(tr.transfer.via_names?.join(' → ')||'street-level')}</span>`:''}<span class="stat">finish <b>${fmt(ev.summary.finish)}</b></span>`);
-   hoverSegments=[];for(const [i,l] of legs.entries()){await drawLeg(l,ev.legs[i],t,{ms:1500});if(t!==runToken)return;}
+   hoverSegments=[];await popAside(t);for(const [i,l] of legs.entries()){await drawLeg(l,ev.legs[i],t,{ms:1500});if(t!==runToken)return;}
    await pulseSegments(t,3);await sleep(1200);}},
  {title:'Auto: rail vs run, fastest first',async run(t){
    modes('auto');clear();
@@ -139,10 +143,10 @@ const CHAPTERS=[
    const evRun=await evaluateLegs([runLeg],'09:30');const evRail=rail.options[0]?await evaluateLegs(rail.options[0].legs,'09:30'):null;
    if(t!==runToken)return;
    flyTo([stations['place-fenwy'].point,stations['place-smary'].point,stations['place-kencl'].point],1.6,6000);
-   const railMin=evRail?Math.round((evRail.summary.finish-evRail.legs[0].start_time)/60):null,runMin=Math.round(evRun.summary.elapsed/60);
+   const railMin=evRail?Math.round((evRail.summary.finish-evRail.legs[0].start_time)/60):null,runMin=Math.round(evRun.legs[0].travel_seconds/60);
    caption('04 · AUTO MODE',`Fenway → Saint Mary's Street: ${runMin} min on foot vs ${railMin??'—'} min by rail`,`Two Green branches, 270 m apart. Auto asks for the rail paths <i>and</i> a Google street run for the same pair, times each against your itinerary on the same clock, and puts the fastest first. Running is a first-class connector, never a hack.`,
      `<span class="stat"><b>${dur(evRun.legs[0].travel_seconds)}</b> run (${(evRun.legs[0].distance/1000).toFixed(2)} km${street?', street route':''})</span>${evRail?`<span class="stat"><b>${dur(evRail.summary.finish-evRail.legs[0].start_time)}</b> rail via ${esc(names[evRail.legs[0].to])}</span>`:''}`);
-   hoverSegments=[];
+   hoverSegments=[];await popAside(t);
    if(evRail){for(const [i,l] of rail.options[0].legs.entries()){await drawLeg(l,evRail.legs[i],t,{ms:900});if(t!==runToken)return;}}
    await drawLeg(runLeg,evRun.legs[0],t,{ms:1400});await sleep(2500);}},
  {title:'Bus connectors and the Silver Line',async run(t){
@@ -153,7 +157,7 @@ const CHAPTERS=[
    const pts=[...(bus.options[0]?.legs[0].geometry||[]),...(sl.options[0]?.legs[0].geometry||[])];flyTo(pts,1.2);
    caption('05 · BUS & SILVER LINE',`Orange → Red by bus 21, and SL3 to Chelsea`,`Scheduled MBTA buses are legal connectors between lines (Forest Hills → Ashmont skips the whole downtown trunk) but <b>never count as station coverage</b>. The Silver Line is part of the record definition, so SL1–SL5 ride like any line with their own coverage count.`,
      `${evBus?`<span class="stat">bus 21 <b>${dur(evBus.legs[0].travel_seconds)}</b> + ${dur(evBus.legs[0].wait_seconds)} wait</span>`:''}${evSl?`<span class="stat">SL3 <b>${dur(evSl.legs[0].travel_seconds)}</b> · ${evSl.silver_covered.length} Silver stops</span>`:''}`);
-   hoverSegments=[];
+   hoverSegments=[];await popAside(t);
    if(evBus){await drawLeg(bus.options[0].legs[0],evBus.legs[0],t,{ms:1800});if(t!==runToken)return;}
    modes('silver');if(evSl){await drawLeg(sl.options[0].legs[0],evSl.legs[0],t,{ms:1800});}
    await pulseSegments(t,3);await sleep(1500);}},
@@ -163,12 +167,13 @@ const CHAPTERS=[
    const legs=[...a.options[0].legs,...b.options[0].legs,...c.options[0].legs,...d.options[0].legs];
    const ev=await evaluateLegs(legs,'08:00');const an=await api('/api/analyze',{date:DATE(),time:'08:00',legs,assumptions:{run_pace:6}});
    if(t!==runToken)return;flyTo(legs.flatMap(l=>l.geometry),1.2);
+   if(LAUNCH){caption('06 · BACKTRACKING','Where does a plan waste time?','Ride the same track twice and the clock pays for it. Watch the planner find it.');await popAside(t,2400);if(t!==runToken)return;}
    hoverSegments=[];for(const [i,l] of legs.entries()){await drawLeg(l,ev.legs[i],t,{ms:700});if(t!==runToken)return;}
    const rep=new Set(an.repeated_pieces.map(p=>`${p.leg}:${p.segment}`));
    ev.legs.forEach((l,i)=>(l.segments||[]).forEach((s,k)=>{if(rep.has(`${i}:${k}`))layers.flash.append(el('polyline',{points:s.geometry.map(xy).join(' '),fill:'none',stroke:'#ff5a4e','stroke-width':3,'stroke-dasharray':'3 5','vector-effect':'non-scaling-stroke'}));}));
    const st=an.stretches[0],sc=st?.shortcuts[0],pr=sc?.proposal;
    caption('06 · BACKTRACKING',`${dur(an.backtrack_seconds)} of this plan re-rides track it already covered (${Math.round(an.backtrack_share*100)}%)`,`Any piece ridden twice is backtracking (dotted red). For each repeated stretch the planner prices real alternatives — bus, Silver, another rail path, or a run — from the moment you leave it, and shows the change as an approvable diff.`,
-     sc?`<div class="diffcard"><div class="minus">− legs ${pr?pr.removed_legs.join(', '):st.legs.join(', ')}: ${esc(names[st.start])} → … → ${esc(names[st.end])} (${dur(st.elapsed_seconds)})</div><div class="plus">+ ${esc(sc.kind==='run'?sc.label:(sc.kind==='bus'?'Bus ':'')+sc.label)} ${esc(names[st.start])} → ${esc(names[sc.target])} · ${sc.time_kind==='estimated'?'~':''}${dur(sc.seconds)}</div>${pr?`<div>Finish ${fmt(pr.finish_before)} → <b>${fmt(pr.finish_after)}</b> · <b style="color:#8fd3c7">saves ${dur(sc.saves_seconds)}</b> · one click to approve</div>`:''}</div>`:'<span class="stat">no faster shortcut found for this stretch</span>');
+     sc?`<div class="diffcard"><div class="minus">− legs ${pr?pr.removed_legs.join(', '):st.legs.join(', ')}: ${esc(names[st.start])} → … → ${esc(names[st.end])} (${dur(st.elapsed_seconds)})</div><div class="plus">+ ${esc(sc.kind==='run'?sc.label:(sc.kind==='bus'?'Bus ':'')+sc.label)} ${esc(names[st.start])} → ${esc(names[sc.target])} · ${sc.time_kind==='estimated'?'~':''}${dur(sc.seconds)}</div>${pr?`<div>Finish ${fmt(pr.finish_before)} → <b>${fmt(pr.finish_after)}</b> · <b style="color:#8fd3c7">saves ${dur(pr.saves_seconds)}</b> · one click to approve</div>`:''}</div>`:'<span class="stat">no faster shortcut found for this stretch</span>');
    if(sc&&sc.kind==='run'){await sleep(1800);if(t!==runToken)return;await drawLeg({mode:'run',from:st.start,to:sc.target,geometry:[stations[st.start].point,stations[sc.target].point],distance:sc.meters},null,t,{color:'#8fd3c7',dash:'8 6',ms:1600});}
    await sleep(4500);}},
  {title:'Share it',async run(t){
@@ -184,10 +189,13 @@ async function run(i){
   try{await CHAPTERS[i].run(t);}catch(error){if(t===runToken)caption('DEMO','Live data unavailable',esc(error.message));}
   if(t!==runToken)return;
   $('progress').style.width=`${(i+1)/CHAPTERS.length*100}%`;
+  if(LAUNCH&&i===CHAPTERS.length-1){$('title-card').hidden=false;$('caption').hidden=true;document.body.dataset.done='1';return;}
   if(playing)run((i+1)%CHAPTERS.length);
 }
 (async()=>{
   data=await api('/api/network');stations=Object.fromEntries(data.stations.map(s=>[s.id,s]));
   const all=[...data.routes,...(data.bus?.routes||[])];colors=Object.fromEntries(all.map(r=>[r.id,r.color]));names=Object.fromEntries(data.stations.map(s=>[s.id,s.name]));
-  boot();run(0);
+  boot();
+  if(LAUNCH){document.body.classList.add('launch');$('title-card').hidden=false;await sleep(2600);$('title-card').hidden=true;await sleep(600);}
+  run(0);
 })();
