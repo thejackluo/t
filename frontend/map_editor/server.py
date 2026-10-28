@@ -24,7 +24,12 @@ ASSETS = {'/': ('index.html', 'text/html; charset=utf-8'),
           '/index.html': ('index.html', 'text/html; charset=utf-8'),
           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
           '/map.js': ('map.js', 'text/javascript; charset=utf-8'),
-          '/style.css': ('style.css', 'text/css; charset=utf-8')}
+          '/style.css': ('style.css', 'text/css; charset=utf-8'),
+          '/demo': ('demo.html', 'text/html; charset=utf-8'),
+          '/demo.html': ('demo.html', 'text/html; charset=utf-8'),
+          '/demo.js': ('demo.js', 'text/javascript; charset=utf-8'),
+          '/launch': ('launch.html', 'text/html; charset=utf-8'),
+          '/launch.js': ('launch.js', 'text/javascript; charset=utf-8')}
 REASONS = {200: 'OK', 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found',
            405: 'Method Not Allowed', 413: 'Payload Too Large', 500: 'Internal Server Error'}
 
