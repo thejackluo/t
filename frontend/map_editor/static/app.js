@@ -416,7 +416,7 @@ async function boot(){
   on('share-link','click',async()=>{
     if(!scenario.legs.length)throw Error('Create an itinerary first.');
     const url=location.origin+location.pathname+SHARE+await encodeShare(shareable());
-    const detail=`View-only link (${Math.round(url.length/1000)} k characters). Anyone opening it sees this itinerary and its times; Google street paths are shown as straight lines.`;
+    const detail=`View-only link (${Math.round(url.length/1000)} k characters). Anyone opening it sees this itinerary and its times; running legs fetch their street routes on open.`;
     try{await navigator.clipboard.writeText(url);notify('Copied. '+detail);}
     catch{$('share-url').value=url;$('share-dialog').showModal();$('share-url').select();}
   });
@@ -448,5 +448,6 @@ async function boot(){
   resetEndpoints();render();await evaluate();
   const key=config.google_maps_key||storedKey();
   if(key){try{await map.connectGoogle(key);$('map-status').innerHTML='<i style="background:#248156"></i> Google Maps · MBTA tracks';$('google-open').hidden=true;}catch(error){notify(error.message,'error');}}
+  if(!viewer)streetRoutesForSketches();  // An autosaved draft stores no Google geometry either; refetch the street routes once the studio is up.
 }
 boot().catch(error=>{notify('Could not start route studio: '+error.message,'error');$('map').textContent='Restart with: python3 -m frontend.map_editor.server';});
