@@ -159,12 +159,13 @@ def reverse_ride(network, item, c, b, leaves, day, assumptions):
             back = evaluated(network, option, day, ready, assumptions, 'ride')
             if back:
                 back['transfer_seconds'] = float(assumptions.get('access', 60))
+                back['legs'] = option['legs']
         else:
             chained = evaluated(network, option, day, leaves, assumptions, 'ride', legs=item['legs'] + option['legs'])
             if not chained:
                 continue
             mine = chained['evaluated_legs'][len(item['legs']):]
-            back = {'label': option['label'], 'departure': mine[0]['departure'], 'arrival': mine[-1]['arrival'],
+            back = {'label': option['label'], 'legs': option['legs'], 'departure': mine[0]['departure'], 'arrival': mine[-1]['arrival'],
                     'seconds': mine[-1]['arrival'] - item['arrival'], 'transfer_seconds': mine[0].get('transfer_seconds', 0),
                     'wait_seconds': sum(l.get('wait_seconds', 0) + l.get('transfer_seconds', 0) for l in mine)}
         if back and (best is None or back['seconds'] < best['seconds']):
@@ -208,12 +209,57 @@ def candidates(network, stretch, b, budget, reverse, day, assumptions):
             back = reverse_ride(network, item, b, stretch['end'], leaves, day, assumptions)
             if not back:
                 continue
-            item['then'] = {'from': b, 'to': stretch['end'], 'seconds': back['seconds'], 'label': back['label'],
+            item['then'] = {'from': b, 'to': stretch['end'], 'seconds': back['seconds'], 'label': back['label'], 'legs': back['legs'],
                             'departure': back['departure'], 'arrival': back['arrival'], 'wait_seconds': back['wait_seconds'],
                             'transfer_seconds': back['transfer_seconds'], 'replaces_legs': reverse['legs']}
             item['saves_seconds'] -= back['seconds']
         priced.append(item)
     return priced
+
+
+def proposal(network, scenario, result, flat, stretch, item):
+    """The itinerary with this shortcut applied, as an approvable diff: legs before the stretch are kept, a ride that
+    is only partly repeated is cut at the stretch boundary, the shortcut (and real reverse ride) is inserted, and the
+    rest follows. Returned only when the whole plan still evaluates; the finish times let the user judge it."""
+    legs = result['legs']
+    first, last = flat[stretch['pieces'][0]], flat[stretch['pieces'][-1]]
+    cut_from, cut_to = first['leg'], last['leg']
+    new = [scenario_leg(l) for l in legs[:cut_from]]
+    if first['segment']:  # Keep the unrepeated head of the first ride.
+        head = legs[cut_from]
+        new.append({**network.ride(head['pattern'], head['start'], head['start'] + first['segment']), 'id': head.get('id', '')})
+    added = [scenario_leg(l) for l in item['legs']] if item['kind'] != 'run' else [{
+        'mode': 'run', 'from': stretch['start'], 'to': item['target'],
+        'geometry': [network.stations[stretch['start']]['point'], network.stations[item['target']]['point']],
+        'geometry_source': 'straight_line_sketch'}]
+    tail_from = cut_to + 1
+    if item.get('then'):
+        follow_legs = [l - 1 for l in item['then']['replaces_legs']]
+        last_follow = max(follow_legs)
+        follow_pieces = [p for p in flat if p['leg'] == last_follow]
+        if not follow_pieces or follow_pieces[-1]['segment'] != len(legs[last_follow].get('segments') or []) - 1:
+            return None  # The reversed new ground would end mid-ride; not expressible as whole legs.
+        added += [scenario_leg(l) for l in item['then'].get('legs', [])]
+        tail_from = last_follow + 1
+        removed = list(range(cut_from, last_follow + 1))
+    else:
+        removed = list(range(cut_from, cut_to + 1))
+        tail = legs[cut_to]
+        if tail['mode'] == 'ride' and last['segment'] is not None and last['segment'] < len(tail.get('segments') or []) - 1:
+            added.append({**network.ride(tail['pattern'], tail['start'] + last['segment'] + 1, tail['end']), 'id': ''})
+    new += added + [scenario_leg(l) for l in legs[tail_from:]]
+    try:
+        check = network.evaluate({**scenario, 'legs': new})
+    except ValueError:
+        return None
+    return {'legs': new, 'removed_legs': [i + 1 for i in removed], 'added_count': len(added), 'status': check['status'],
+            'message': check['message'], 'finish_before': result['summary']['finish'], 'finish_after': check['summary']['finish'],
+            'saves_seconds': result['summary']['finish'] - check['summary']['finish']}
+
+
+def scenario_leg(leg):
+    keys = ('id', 'mode', 'pattern', 'start', 'end', 'from', 'to', 'geometry', 'geometry_source', 'provider_seconds')
+    return {k: leg[k] for k in keys if k in leg}
 
 
 def analyze(network, scenario):
@@ -224,6 +270,8 @@ def analyze(network, scenario):
     for s in runs:
         # Shortcut search evaluates several alternatives per stretch; very short repeats (a station or two) are not worth it.
         s['shortcuts'] = shortcuts(network, s, str(scenario.get('date', '')), assumptions) if s['elapsed_seconds'] >= MIN_SHORTCUT_SECONDS else []
+        for item in s['shortcuts']:
+            item['proposal'] = proposal(network, scenario, result, flat, s, item)
         s['best_saving_seconds'] = s['shortcuts'][0]['saves_seconds'] if s['shortcuts'] else 0
     ridden = [p for p in flat if not p.get('gap')]
     moving = sum(p['seconds'] for p in ridden)

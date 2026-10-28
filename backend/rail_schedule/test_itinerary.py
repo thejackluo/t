@@ -383,6 +383,12 @@ class BacktrackingTests(unittest.TestCase):
         self.assertEqual(run['seconds'], math.ceil(meters / 1000 * 5 * 60))
         self.assertEqual(run['time_kind'], 'estimated')
         self.assertIn('straight-line', run['note'])
+        change = run['proposal']  # Approvable diff: the two repeated legs go, the run comes in, the plan still evaluates.
+        self.assertEqual((change['removed_legs'], change['added_count'], change['status']), ([3, 4], 1, 'ok'))
+        self.assertEqual([l['mode'] for l in change['legs']], ['ride', 'ride', 'run'])
+        self.assertEqual((change['legs'][-1]['from'], change['legs'][-1]['to']), ('place-mdftf', 'place-alfcl'))
+        self.assertLess(change['finish_after'], change['finish_before'])
+        self.assertEqual(self.n.evaluate({'date': '2026-10-22', 'time': '08:00', 'legs': change['legs']})['status'], 'ok')
 
     def test_shortcuts_are_priced_with_the_scenario_assumptions(self):
         from backend.rail_schedule.backtracking import evaluated
